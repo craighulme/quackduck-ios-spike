@@ -1,4 +1,5 @@
 import java.io.PrintWriter;
+import java.io.PrintStream;
 import java.lang.reflect.InvocationTargetException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -6,6 +7,10 @@ import java.nio.file.Path;
 public final class Launcher {
     public static void main(String[] args) throws Throwable {
         Path status = Path.of(System.getenv("QD_SENTINEL"));
+        Path log = status.resolveSibling("runelite.log");
+        PrintStream output = new PrintStream(Files.newOutputStream(log), true);
+        System.setOut(output);
+        System.setErr(output);
         Files.writeString(status, "JVM_OK " + System.getProperty("java.version") + "\nRUNITELITE_LOADING\n");
 
         try {

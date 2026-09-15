@@ -34,9 +34,11 @@ launch_pid=$!
 for _ in {1..90}; do
   if [[ -f "$data/Documents/java-ok.txt" ]]; then
     cp "$data/Documents/java-ok.txt" "$build/java-ok.txt"
+    [[ ! -f "$data/Documents/runelite.log" ]] || cp "$data/Documents/runelite.log" "$build/runelite.log"
     cat "$build/java-ok.txt"
     if grep -q 'RUNITELITE_CLASS_OK' "$build/java-ok.txt"; then
       sleep 20
+      [[ ! -f "$data/Documents/runelite.log" ]] || cp "$data/Documents/runelite.log" "$build/runelite.log"
       xcrun simctl io "$device" screenshot "$build/screenshot.png"
       exit 0
     fi
@@ -48,6 +50,7 @@ for _ in {1..90}; do
 done
 
 xcrun simctl io "$device" screenshot "$build/screenshot.png" || true
+[[ ! -f "$data/Documents/runelite.log" ]] || cp "$data/Documents/runelite.log" "$build/runelite.log"
 cat "$build/app.log" || true
 echo 'RuneLite did not load within 90 seconds.' >&2
 exit 1

@@ -44,4 +44,5 @@ jobs:
             build/java-ok.txt
             build/app.log
             build/launch.log
+            build/runelite.log
           if-no-files-found: ignore
