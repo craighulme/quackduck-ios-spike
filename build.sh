@@ -38,14 +38,14 @@ javac -d "$app/classes" "$root/java/Launcher.java"
 sdk="$(xcrun --sdk iphonesimulator --show-sdk-path)"
 xcrun --sdk iphonesimulator clang -dynamiclib \
   -arch arm64 -mios-simulator-version-min=14.0 -fobjc-arc \
-  -isysroot "$sdk" -I"$jre/include" -I"$jre/include/darwin" \
+  -isysroot "$sdk" -I"$amethyst/Natives" \
   "$amethyst/Natives/awt_xawt/xawt_fake.m" \
   -Wl,-install_name,@rpath/libawt_xawt.dylib \
   -o "$jre/lib/libawt_xawt.dylib"
 
 xcrun --sdk iphonesimulator clang \
   -arch arm64 -mios-simulator-version-min=14.0 -fobjc-arc \
-  -isysroot "$sdk" -I"$jre/include" -I"$jre/include/darwin" \
+  -isysroot "$sdk" -I"$amethyst/Natives" \
   "$root/src/main.m" \
   -framework UIKit -framework Foundation -framework QuartzCore \
   -o "$app/QuackDuckJVM"
