@@ -55,6 +55,8 @@ public final class Launcher {
             }
         }
         settings.setProperty("runelite.automaticResizeType", "KEEP_WINDOW_SIZE");
+        settings.setProperty("runelite.gameSize",
+            (screen.width - 40) + "x" + (screen.height - 40));
         settings.setProperty("runelite.clientBounds",
             "0:0:" + screen.width + ":" + screen.height + ":c");
         try (OutputStream out = Files.newOutputStream(file)) {
