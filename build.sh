@@ -47,7 +47,7 @@ xcrun --sdk iphonesimulator clang \
   -arch arm64 -mios-simulator-version-min=14.0 -fobjc-arc \
   -isysroot "$sdk" -I"$amethyst/Natives" \
   "$root/src/main.m" \
-  -framework UIKit -framework Foundation -framework QuartzCore \
+  -framework UIKit -framework Foundation -framework QuartzCore -framework CoreGraphics \
   -o "$app/QuackDuckJVM"
 
 cp "$root/Info.plist" "$app/Info.plist"
