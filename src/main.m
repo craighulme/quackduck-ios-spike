@@ -203,6 +203,7 @@ static NSString *RunJava(int width, int height) {
         java.UTF8String, "-Xms128m", "-Xmx768m",
         "-XX:+UnlockExperimentalVMOptions", "-XX:+DisablePrimordialThreadGuardPages",
         "-XX:-UseCompressedClassPointers", "-Djava.awt.headless=false",
+        "-Dos.name=iOS",
         "-Dcacio.font.fontmanager=sun.awt.X11FontManager",
         "-Dcacio.font.fontscaler=sun.font.FreetypeFontScaler", screen.UTF8String,
         "-Dswing.defaultlaf=javax.swing.plaf.metal.MetalLookAndFeel",
