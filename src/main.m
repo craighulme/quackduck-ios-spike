@@ -197,6 +197,8 @@ static NSString *RunJava(int width, int height) {
     NSString *classpath = [NSString stringWithFormat:@"%@/classes:%@/libs/*", bundle, bundle];
     NSString *libraryPath = [@"-Djava.library.path=" stringByAppendingString:
         [javaHome stringByAppendingPathComponent:@"lib"]];
+    NSString *fontPath = [@"-Dsun.java2d.fontpath=" stringByAppendingString:
+        [javaHome stringByAppendingPathComponent:@"lib/fonts"]];
     NSString *userHome = [@"-Duser.home=" stringByAppendingString:documents];
 
     const char *args[] = {
@@ -225,7 +227,7 @@ static NSString *RunJava(int width, int height) {
         "--add-opens=java.desktop/sun.font=ALL-UNNAMED",
         "--add-opens=java.desktop/sun.java2d=ALL-UNNAMED",
         "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED",
-        boot.UTF8String, libraryPath.UTF8String, userHome.UTF8String,
+        boot.UTF8String, libraryPath.UTF8String, fontPath.UTF8String, userHome.UTF8String,
         "-cp", classpath.UTF8String, "dev.quackduck.Launcher"
     };
 
