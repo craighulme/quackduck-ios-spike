@@ -1,5 +1,7 @@
 #import <UIKit/UIKit.h>
+#import <AVFoundation/AVFoundation.h>
 #import <QuartzCore/QuartzCore.h>
+#import <objc/runtime.h>
 #include <dlfcn.h>
 #include <jni.h>
 #include <unistd.h>
@@ -13,6 +15,13 @@ static JLI_Launch *gLaunch;
 static JavaVM *gVM;
 static jclass gInputClass;
 static jmethodID gReceiveInput;
+
+static void QDDisableMicrophoneRequest(void) {
+    Method method = class_getInstanceMethod(AVAudioSession.class,
+        @selector(requestRecordPermission:));
+    if (method) method_setImplementation(method, imp_implementationWithBlock(
+        ^(__unused id session, void (^reply)(BOOL)) { if (reply) reply(NO); }));
+}
 
 enum {
     QDInputChar = 1000,
@@ -258,6 +267,7 @@ static NSString *RunJava(int width, int height) {
 @implementation AppDelegate
 - (BOOL)application:(UIApplication *)application
     didFinishLaunchingWithOptions:(NSDictionary *)options {
+    QDDisableMicrophoneRequest();
     UIViewController *controller = [UIViewController new];
     controller.view.backgroundColor = UIColor.blackColor;
 
