@@ -24,6 +24,11 @@ fi
 
 cp -R "$cache" "$jre"
 
+mkdir -p "$jre/lib/fonts"
+curl -fL --retry 3 \
+  'https://raw.githubusercontent.com/google/fonts/main/ofl/notosans/NotoSans%5Bwdth,wght%5D.ttf' \
+  -o "$jre/lib/fonts/NotoSans.ttf"
+
 if [[ ! -d "$amethyst/.git" ]]; then
   git clone --depth 1 https://github.com/AngelAuraMC/Amethyst-iOS.git "$amethyst"
 fi
