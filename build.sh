@@ -40,6 +40,7 @@ xcrun --sdk iphonesimulator clang -dynamiclib \
   -arch arm64 -mios-simulator-version-min=14.0 -fobjc-arc \
   -isysroot "$sdk" -I"$amethyst/Natives" \
   "$amethyst/Natives/awt_xawt/xawt_fake.m" \
+  -L"$jre/lib" -lawt_headless -Wl,-rpath,@loader_path \
   -Wl,-install_name,@rpath/libawt_xawt.dylib \
   -o "$jre/lib/libawt_xawt.dylib"
 
