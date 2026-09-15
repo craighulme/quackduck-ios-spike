@@ -20,6 +20,7 @@ for runtime_name, runtime in reversed(list(data.items())):
 xcrun simctl boot "$device" 2>/dev/null || true
 xcrun simctl bootstatus "$device" -b
 xcrun simctl install "$device" "$build/QuackDuckJVM.app"
+xcrun simctl privacy "$device" grant microphone "$bundle_id"
 
 data="$(xcrun simctl get_app_container "$device" "$bundle_id" data)"
 xcrun simctl spawn "$device" log stream --style compact --level debug \
