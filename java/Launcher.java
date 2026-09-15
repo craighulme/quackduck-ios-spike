@@ -9,6 +9,8 @@ public final class Launcher {
         Files.writeString(status, "JVM_OK " + System.getProperty("java.version") + "\nRUNITELITE_LOADING\n");
 
         try {
+            Class.forName("com.github.caciocavallosilano.cacio.ctc.CTCPreloadClassLoader");
+            Files.writeString(status, Files.readString(status) + "AWT_BRIDGE_OK\n");
             Class<?> runelite = Class.forName("net.runelite.client.RuneLite");
             Files.writeString(status, Files.readString(status) + "RUNITELITE_CLASS_OK\n");
             runelite.getMethod("main", String[].class).invoke(null, (Object) args);
