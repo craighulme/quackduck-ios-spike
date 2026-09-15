@@ -7,6 +7,7 @@ typedef unsigned char jboolean;
 typedef jint JLI_Launch(int, const char **, int, const char **, int,
                        const char **, const char *, const char *, const char *,
                        const char *, jboolean, jboolean, jboolean, jint);
+static JLI_Launch *gLaunch;
 
 static NSString *RunJava(void) {
     NSString *bundle = NSBundle.mainBundle.bundlePath;
@@ -23,8 +24,8 @@ static NSString *RunJava(void) {
     void *jli = dlopen(jliPath.UTF8String, RTLD_NOW | RTLD_GLOBAL);
     if (!jli) return [NSString stringWithFormat:@"dlopen failed: %s", dlerror()];
 
-    JLI_Launch *launch = (JLI_Launch *)dlsym(jli, "JLI_Launch");
-    if (!launch) return @"JLI_Launch was not found";
+    gLaunch = (JLI_Launch *)dlsym(jli, "JLI_Launch");
+    if (!gLaunch) return @"JLI_Launch was not found";
 
     NSString *java = [javaHome stringByAppendingPathComponent:@"bin/java"];
     NSString *classpath = [@"-Djava.class.path=" stringByAppendingString:classes];
@@ -37,8 +38,9 @@ static NSString *RunJava(void) {
         classpath.UTF8String,
         "Hello"
     };
-    int result = launch(8, args, 0, NULL, 0, NULL, "17", "17", "java",
-                        "openjdk", 0, 1, 0, 1);
+    NSLog(@"QD_JVM: calling JLI_Launch");
+    int result = gLaunch(8, args, 0, NULL, 0, NULL, "17", "17", "java",
+                         "openjdk", 0, 1, 0, 1);
     return [NSString stringWithFormat:@"JVM exited with %d", result];
 }
 
@@ -90,6 +92,11 @@ static NSString *RunJava(void) {
 @end
 
 int main(int argc, char *argv[]) {
+    if (gLaunch) {
+        NSLog(@"QD_JVM: handling JLI native-main re-entry");
+        return gLaunch(argc, (const char **)argv, 0, NULL, 0, NULL,
+                       "17", "17", "java", "openjdk", 0, 1, 0, 1);
+    }
     @autoreleasepool {
         return UIApplicationMain(argc, argv, nil, NSStringFromClass(AppDelegate.class));
     }
