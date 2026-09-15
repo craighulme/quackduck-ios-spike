@@ -335,8 +335,10 @@ static NSString *RunJava(int width, int height) {
     [self.window makeKeyAndVisible];
 
     CGRect bounds = controller.view.bounds;
-    self.surface.pixelWidth = (int)floor(MAX(bounds.size.width, bounds.size.height));
-    self.surface.pixelHeight = (int)floor(MIN(bounds.size.width, bounds.size.height));
+    self.surface.pixelHeight = 540;
+    self.surface.pixelWidth = (int)round(self.surface.pixelHeight *
+        MAX(bounds.size.width, bounds.size.height) /
+        MAX(MIN(bounds.size.width, bounds.size.height), 1));
     if (self.surface.pixelWidth % 2) self.surface.pixelWidth--;
     if (self.surface.pixelHeight % 2) self.surface.pixelHeight--;
     __weak AppDelegate *weakSelf = self;
