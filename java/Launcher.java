@@ -2,6 +2,7 @@ package dev.quackduck;
 
 import java.awt.Font;
 import java.awt.GraphicsEnvironment;
+import java.awt.Rectangle;
 import java.io.PrintWriter;
 import java.io.PrintStream;
 import java.io.InputStream;
@@ -25,9 +26,10 @@ public final class Launcher {
             Path font = Path.of(System.getProperty("java.home"), "lib", "fonts", "NotoSans.ttf");
             GraphicsEnvironment.getLocalGraphicsEnvironment()
                 .registerFont(Font.createFont(Font.TRUETYPE_FONT, font.toFile()));
-            configureMobileWindow();
+            Rectangle screen = configureMobileWindow();
             Files.writeString(status, Files.readString(status) + "AWT_BRIDGE_OK\n");
             Class<?> runelite = Class.forName("net.runelite.client.RuneLite");
+            applyMobileWindowConfig(runelite, screen);
             Files.writeString(status, Files.readString(status) + "RUNITELITE_CLASS_OK\n");
             runelite.getMethod("main", String[].class).invoke(null, (Object) args);
         } catch (Throwable failure) {
@@ -43,7 +45,7 @@ public final class Launcher {
         }
     }
 
-    private static void configureMobileWindow() throws Exception {
+    private static Rectangle configureMobileWindow() throws Exception {
         var screen = GraphicsEnvironment.getLocalGraphicsEnvironment()
             .getMaximumWindowBounds();
         Path file = Path.of(System.getProperty("user.home"), ".runelite", "settings.properties");
@@ -62,5 +64,32 @@ public final class Launcher {
         try (OutputStream out = Files.newOutputStream(file)) {
             settings.store(out, "QuackDuck iOS window defaults");
         }
+        return screen;
+    }
+
+    private static void applyMobileWindowConfig(Class<?> runelite, Rectangle screen) {
+        Thread worker = new Thread(() -> {
+            try {
+                Object injector;
+                do {
+                    injector = runelite.getMethod("getInjector").invoke(null);
+                    if (injector == null) Thread.sleep(100);
+                } while (injector == null);
+
+                Class<?> configClass = Class.forName("net.runelite.client.config.ConfigManager");
+                Object config = Class.forName("com.google.inject.Injector")
+                    .getMethod("getInstance", Class.class).invoke(injector, configClass);
+                var set = configClass.getMethod("setConfiguration",
+                    String.class, String.class, String.class);
+                set.invoke(config, "runelite", "automaticResizeType", "KEEP_WINDOW_SIZE");
+                set.invoke(config, "runelite", "gameSize",
+                    (screen.width - 40) + "x" + (screen.height - 40));
+                System.out.println("QD_IOS: mobile window layout applied");
+            } catch (Throwable failure) {
+                failure.printStackTrace();
+            }
+        }, "quackduck-window-layout");
+        worker.setDaemon(true);
+        worker.start();
     }
 }
