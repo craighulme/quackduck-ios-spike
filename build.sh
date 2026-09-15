@@ -36,6 +36,12 @@ cp "$root/.cache/client-$runelite_version-shaded.jar" "$app/libs/runelite.jar"
 javac -d "$app/classes" "$root/java/Launcher.java"
 
 sdk="$(xcrun --sdk iphonesimulator --show-sdk-path)"
+# The downloaded runtime is device-tagged; make this dependency simulator-tagged
+# before the linker records it in our Caciocavallo shim. The full runtime pass below
+# performs the same conversion for every remaining Mach-O file.
+xcrun vtool -arch arm64 -set-build-version 7 14.0 16.0 -replace \
+  -output "$jre/lib/libawt_headless.dylib.sim" "$jre/lib/libawt_headless.dylib"
+mv "$jre/lib/libawt_headless.dylib.sim" "$jre/lib/libawt_headless.dylib"
 xcrun --sdk iphonesimulator clang -dynamiclib \
   -arch arm64 -mios-simulator-version-min=14.0 -fobjc-arc \
   -isysroot "$sdk" -I"$amethyst/Natives" \
