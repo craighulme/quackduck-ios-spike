@@ -29,6 +29,7 @@ enum {
     QDInputKey = 1005,
     QDInputMouseButton = 1006,
     QDButton1DownMask = 1024,
+    QDButton3DownMask = 4096,
 };
 
 static JNIEnv *QDEnv(void) {
@@ -71,6 +72,7 @@ static void QDSendKey(int key) {
 @property(nonatomic) int pixelWidth;
 @property(nonatomic) int pixelHeight;
 @property(nonatomic, copy) void (^firstFrame)(void);
+@property(nonatomic) NSInteger hoveredMenuRow;
 - (void)startDisplayLoop;
 @end
 
@@ -80,30 +82,53 @@ static void QDSendKey(int key) {
         self.backgroundColor = UIColor.blackColor;
         self.layer.magnificationFilter = kCAFilterLinear;
         self.multipleTouchEnabled = NO;
+
+        UILongPressGestureRecognizer *hold = [[UILongPressGestureRecognizer alloc]
+            initWithTarget:self action:@selector(handleHold:)];
+        hold.minimumPressDuration = 0.4;
+        UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc]
+            initWithTarget:self action:@selector(handleTap:)];
+        [tap requireGestureRecognizerToFail:hold];
+        [self addGestureRecognizer:hold];
+        [self addGestureRecognizer:tap];
     }
     return self;
 }
 
-- (void)sendCursor:(UITouch *)touch {
-    CGPoint point = [touch locationInView:self];
+- (void)sendCursorAt:(CGPoint)point {
     int x = (int)round(point.x * self.pixelWidth / MAX(self.bounds.size.width, 1));
     int y = (int)round(point.y * self.pixelHeight / MAX(self.bounds.size.height, 1));
     QDSendInput(QDInputCursor, x, y, 0, 0);
 }
 
-- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
-    [self sendCursor:touches.anyObject];
+- (void)handleTap:(UITapGestureRecognizer *)gesture {
+    [self sendCursorAt:[gesture locationInView:self]];
     QDSendInput(QDInputMouseButton, QDButton1DownMask, 1, 0, 0);
-}
-- (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
-    [self sendCursor:touches.anyObject];
-}
-- (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
-    [self sendCursor:touches.anyObject];
     QDSendInput(QDInputMouseButton, QDButton1DownMask, 0, 0, 0);
 }
-- (void)touchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
-    QDSendInput(QDInputMouseButton, QDButton1DownMask, 0, 0, 0);
+
+- (void)handleHold:(UILongPressGestureRecognizer *)gesture {
+    CGPoint point = [gesture locationInView:self];
+    [self sendCursorAt:point];
+    if (gesture.state == UIGestureRecognizerStateBegan) {
+        self.hoveredMenuRow = -1;
+        QDSendInput(QDInputMouseButton, QDButton3DownMask, 1, 0, 0);
+        QDSendInput(QDInputMouseButton, QDButton3DownMask, 0, 0, 0);
+        [[[UIImpactFeedbackGenerator alloc]
+            initWithStyle:UIImpactFeedbackStyleMedium] impactOccurred];
+    } else if (gesture.state == UIGestureRecognizerStateChanged) {
+        NSInteger row = (NSInteger)floor(point.y * self.pixelHeight /
+                                         MAX(self.bounds.size.height, 1) / 15.0);
+        if (row != self.hoveredMenuRow) {
+            self.hoveredMenuRow = row;
+            [[[UISelectionFeedbackGenerator alloc] init] selectionChanged];
+        }
+    } else if (gesture.state == UIGestureRecognizerStateEnded) {
+        QDSendInput(QDInputMouseButton, QDButton1DownMask, 1, 0, 0);
+        QDSendInput(QDInputMouseButton, QDButton1DownMask, 0, 0, 0);
+        [[[UIImpactFeedbackGenerator alloc]
+            initWithStyle:UIImpactFeedbackStyleLight] impactOccurred];
+    }
 }
 
 - (void)startDisplayLoop {
