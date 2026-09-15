@@ -1,3 +1,5 @@
+package dev.quackduck;
+
 import java.io.PrintWriter;
 import java.io.PrintStream;
 import java.lang.reflect.InvocationTargetException;

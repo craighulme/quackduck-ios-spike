@@ -225,7 +225,7 @@ static NSString *RunJava(int width, int height) {
         "--add-opens=java.desktop/sun.java2d=ALL-UNNAMED",
         "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED",
         boot.UTF8String, libraryPath.UTF8String, userHome.UTF8String,
-        "-cp", classpath.UTF8String, "Launcher"
+        "-cp", classpath.UTF8String, "dev.quackduck.Launcher"
     };
 
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0), ^{
