@@ -40,4 +40,5 @@ jobs:
             build/screenshot.png
             build/java-ok.txt
             build/app.log
+            build/launch.log
           if-no-files-found: ignore

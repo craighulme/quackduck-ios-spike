@@ -25,9 +25,11 @@ data="$(xcrun simctl get_app_container "$device" "$bundle_id" data)"
 xcrun simctl spawn "$device" log stream --style compact --level debug \
   --predicate "process == 'QuackDuckJVM'" > "$build/app.log" 2>&1 &
 logger_pid=$!
-trap 'kill "$logger_pid" 2>/dev/null || true; xcrun simctl shutdown "$device" 2>/dev/null || true' EXIT
+launch_pid=''
+trap 'kill "$logger_pid" ${launch_pid:-} 2>/dev/null || true; xcrun simctl shutdown "$device" 2>/dev/null || true' EXIT
 
-xcrun simctl launch "$device" "$bundle_id"
+xcrun simctl launch "$device" "$bundle_id" > "$build/launch.log" 2>&1 &
+launch_pid=$!
 
 for _ in {1..45}; do
   if [[ -f "$data/Documents/java-ok.txt" ]]; then
