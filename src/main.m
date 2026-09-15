@@ -111,12 +111,14 @@ static void QDSendKey(int key) {
         }
         jmethodID getRGB = (*env)->GetStaticMethodID(env, screen,
             "getCurrentScreenRGB", "()[I");
+        jfieldID instanceID = (*env)->GetStaticFieldID(env, screen, "instance",
+            "Lcom/github/caciocavallosilano/cacio/ctc/CTCScreen;");
+        while (!(*env)->GetStaticObjectField(env, screen, instanceID)) usleep(100000);
         BOOL sentFirstFrame = NO;
 
         for (;;) {
             jintArray array = (jintArray)(*env)->CallStaticObjectMethod(env, screen, getRGB);
             if ((*env)->ExceptionCheck(env)) {
-                (*env)->ExceptionDescribe(env);
                 (*env)->ExceptionClear(env);
                 usleep(250000);
                 continue;
