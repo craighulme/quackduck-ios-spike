@@ -3,7 +3,7 @@ set -euo pipefail
 
 root="$(cd "$(dirname "$0")" && pwd)"
 build="$root/build"
-bundle_id="dev.quackduck.jvm-spike"
+bundle_id="dev.quackduck.runelite"
 
 device="$(xcrun simctl list devices available -j | python3 -c '
 import json, sys
@@ -31,17 +31,23 @@ trap 'kill "$logger_pid" ${launch_pid:-} 2>/dev/null || true; xcrun simctl shutd
 xcrun simctl launch "$device" "$bundle_id" > "$build/launch.log" 2>&1 &
 launch_pid=$!
 
-for _ in {1..45}; do
+for _ in {1..90}; do
   if [[ -f "$data/Documents/java-ok.txt" ]]; then
     cp "$data/Documents/java-ok.txt" "$build/java-ok.txt"
     cat "$build/java-ok.txt"
-    xcrun simctl io "$device" screenshot "$build/screenshot.png"
-    exit 0
+    if grep -q 'RUNITELITE_CLASS_OK' "$build/java-ok.txt"; then
+      sleep 20
+      xcrun simctl io "$device" screenshot "$build/screenshot.png"
+      exit 0
+    fi
+    if grep -q 'RUNITELITE_FAILED' "$build/java-ok.txt"; then
+      break
+    fi
   fi
   sleep 1
 done
 
 xcrun simctl io "$device" screenshot "$build/screenshot.png" || true
 cat "$build/app.log" || true
-echo 'Java did not create its sentinel file within 45 seconds.' >&2
+echo 'RuneLite did not load within 90 seconds.' >&2
 exit 1

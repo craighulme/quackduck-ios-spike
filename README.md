@@ -1,13 +1,16 @@
-# QuackDuck iOS JVM spike
+# QuackDuck RuneLite iOS port
 
-This deliberately tiny experiment answers one question: can an ARM64 iOS
-Simulator app boot the iOS OpenJDK 17 runtime used by Amethyst/Pojav?
+This is the first runnable iOS host for RuneLite. It embeds the iOS OpenJDK 17
+runtime and Caciocavallo AWT backend used by Amethyst, then boots RuneLite's
+normal JVM client inside an ARM64 iOS Simulator app.
 
-GitHub Actions builds and launches `QuackDuckJVM.app`. The Java program writes
-`JAVA_OK` from inside the simulator; the job fails if that file never appears.
-The artifact contains the `.app` zip, screenshot, app log, and Java result.
+The native host displays AWT's framebuffer and maps iOS taps and keyboard input
+back to AWT mouse/key events. GitHub Actions builds and launches the app; the job
+fails if the JVM cannot resolve RuneLite's main class. Its artifact contains the
+Appetize-ready `.app` zip, screenshot, app log, and boot result.
 
 The runtime is downloaded at build time from the current
 [Amethyst iOS](https://github.com/AngelAuraMC/Amethyst-iOS) OpenJDK distribution
-and is not stored in this repository.
-
+and is not stored in this repository. The default RuneLite client is fetched
+from RuneLite's official Maven repository; set `RUNELITE_JAR_URL` to package a
+compatible shaded client instead.

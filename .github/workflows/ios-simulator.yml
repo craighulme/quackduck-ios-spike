@@ -1,4 +1,4 @@
-name: iOS JVM smoke test
+name: RuneLite iOS simulator
 
 on:
   push:
@@ -21,20 +21,23 @@ jobs:
 
       - uses: actions/cache@v4
         with:
-          path: .cache/jre17
-          key: amethyst-ios-jre17-20260708
+          path: |
+            .cache/jre17
+            .cache/amethyst
+            .cache/client-1.12.37-shaded.jar
+          key: quackduck-ios-runtime-v2
 
       - name: Build ARM64 simulator app
         run: ./build.sh
 
-      - name: Boot simulator and verify Java
+      - name: Boot simulator and verify RuneLite
         run: ./test.sh
 
       - name: Upload app and diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: quackduck-ios-jvm-spike-${{ github.run_number }}
+          name: quackduck-runelite-ios-${{ github.run_number }}
           path: |
             build/QuackDuckJVM.zip
             build/screenshot.png
