@@ -7,7 +7,7 @@
 typedef jint JLI_Launch(int, const char **, int, const char **, int,
                        const char **, const char *, const char *, const char *,
                        const char *, jboolean, jboolean, jboolean, jint);
-typedef jint JNI_GetCreatedJavaVMs(JavaVM **, jsize, jsize *);
+typedef jint QDGetCreatedJavaVMs(JavaVM **, jsize, jsize *);
 
 static JLI_Launch *gLaunch;
 static JavaVM *gVM;
@@ -27,7 +27,7 @@ static JNIEnv *QDEnv(void) {
     JNIEnv *env = NULL;
     jint result = (*gVM)->GetEnv(gVM, (void **)&env, JNI_VERSION_1_6);
     if (result == JNI_EDETACHED) {
-        result = (*gVM)->AttachCurrentThread(gVM, (void **)&env, NULL);
+        result = (*gVM)->AttachCurrentThread(gVM, &env, NULL);
     }
     return result == JNI_OK ? env : NULL;
 }
@@ -230,10 +230,10 @@ static NSString *RunJava(int width, int height) {
 
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0), ^{
         NSString *jvmPath = [javaHome stringByAppendingPathComponent:@"lib/server/libjvm.dylib"];
-        JNI_GetCreatedJavaVMs *getVMs = NULL;
+        QDGetCreatedJavaVMs *getVMs = NULL;
         while (!getVMs) {
             void *jvm = dlopen(jvmPath.UTF8String, RTLD_NOW | RTLD_NOLOAD);
-            if (jvm) getVMs = (JNI_GetCreatedJavaVMs *)dlsym(jvm, "JNI_GetCreatedJavaVMs");
+            if (jvm) getVMs = (QDGetCreatedJavaVMs *)dlsym(jvm, "JNI_GetCreatedJavaVMs");
             if (!getVMs) usleep(100000);
         }
         jsize count = 0;
@@ -299,7 +299,8 @@ static NSString *RunJava(int width, int height) {
     self.surface.pixelHeight = (int)floor(MIN(bounds.size.width, bounds.size.height));
     if (self.surface.pixelWidth % 2) self.surface.pixelWidth--;
     if (self.surface.pixelHeight % 2) self.surface.pixelHeight--;
-    self.surface.firstFrame = ^{ self.status.hidden = YES; };
+    __weak AppDelegate *weakSelf = self;
+    self.surface.firstFrame = ^{ weakSelf.status.hidden = YES; };
     [self.surface startDisplayLoop];
 
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
