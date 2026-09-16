@@ -6,6 +6,8 @@
 #import <objc/runtime.h>
 #include <dlfcn.h>
 #include <jni.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <unistd.h>
 
 typedef jint JLI_Launch(int, const char **, int, const char **, int,
@@ -25,6 +27,15 @@ static NSString *const QDAccountURL = @"https://quackduck.dev/mobile";
 static NSString *const QDServerPublicKey = @"MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEiJ6JX7xxSxX12gR5E8bv+jVIl0VOy3b4hez05a0KkNwQjUJDMT2PpK6UbiR3ZV1WvP/PsB5/SCmtWqPYNx0U3Q==";
 static NSString *const QDKeyTag = @"dev.quackduck.mobile-auth-key-v1";
 static NSString *const QDIdentityAccount = @"mobile-auth-identity-v1";
+
+static void QDRecord(NSString *line) {
+    const char *path = getenv("QD_SENTINEL");
+    if (!path) return;
+    FILE *file = fopen(path, "a");
+    if (!file) return;
+    fprintf(file, "%s\n", line.UTF8String);
+    fclose(file);
+}
 
 static NSString *QDBase64URL(NSData *data) {
     NSString *value = [data base64EncodedStringWithOptions:0];
@@ -110,7 +121,14 @@ static SecKeyRef QDPrivateKey(void) {
                 (__bridge id)kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         }
     };
-    return SecKeyCreateRandomKey((__bridge CFDictionaryRef)attributes, NULL);
+    CFErrorRef error = NULL;
+    SecKeyRef key = SecKeyCreateRandomKey((__bridge CFDictionaryRef)attributes, &error);
+    if (!key && error) {
+        NSLog(@"QD_IOS: device key error %@", (__bridge NSError *)error);
+        QDRecord(@"AUTH_KEY_FAILED");
+    }
+    if (error) CFRelease(error);
+    return key;
 }
 
 static NSData *QDPublicKey(SecKeyRef privateKey) {
@@ -703,6 +721,7 @@ static NSString *RunJava(int width, int height) {
 
 - (void)presentQuackDuckLogin:(NSString *)detail {
     NSLog(@"QD_IOS: QuackDuck auth prompt");
+    QDRecord(@"AUTH_PROMPT_OK");
     NSString *message = detail.length
         ? [@"Sign in with Discord, then enter the pairing code.\n\n" stringByAppendingString:detail]
         : @"Sign in with Discord, then enter the pairing code shown on your QuackDuck account.";

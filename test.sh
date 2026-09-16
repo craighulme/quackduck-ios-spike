@@ -38,8 +38,11 @@ for _ in {1..90}; do
     cat "$build/java-ok.txt"
     if grep -q 'RUNITELITE_CLASS_OK' "$build/java-ok.txt"; then
       sleep 45
+      cp "$data/Documents/java-ok.txt" "$build/java-ok.txt"
       [[ ! -f "$data/Documents/runelite.log" ]] || cp "$data/Documents/runelite.log" "$build/runelite.log"
       grep -q 'QD_IOS: mobile window layout applied' "$build/runelite.log"
+      grep -q 'AUTH_PROMPT_OK' "$build/java-ok.txt"
+      ! grep -q 'AUTH_KEY_FAILED' "$build/java-ok.txt"
       xcrun simctl io "$device" screenshot "$build/screenshot.png"
       exit 0
     fi
