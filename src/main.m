@@ -3,6 +3,7 @@
 #import <QuartzCore/QuartzCore.h>
 #import <Security/Security.h>
 #import <CommonCrypto/CommonDigest.h>
+#import <TargetConditionals.h>
 #import <objc/runtime.h>
 #include <dlfcn.h>
 #include <jni.h>
@@ -24,6 +25,7 @@ static jmethodID gRepaintWindows;
 
 static NSString *const QDAuthURL = @"https://quackduck.dev/api/mobile/device";
 static NSString *const QDAccountURL = @"https://quackduck.dev/mobile";
+static NSString *const QDLatestPlistURL = @"https://raw.githubusercontent.com/craighulme/quackduck-ios-spike/main/Info.plist";
 static NSString *const QDServerPublicKey = @"MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEiJ6JX7xxSxX12gR5E8bv+jVIl0VOy3b4hez05a0KkNwQjUJDMT2PpK6UbiR3ZV1WvP/PsB5/SCmtWqPYNx0U3Q==";
 static NSString *const QDKeyTag = @"dev.quackduck.mobile-auth-key-v1";
 static NSString *const QDIdentityAccount = @"mobile-auth-identity-v1";
@@ -43,6 +45,21 @@ static NSString *QDBase64URL(NSData *data) {
     value = [value stringByReplacingOccurrencesOfString:@"/" withString:@"_"];
     return [value stringByTrimmingCharactersInSet:
         [NSCharacterSet characterSetWithCharactersInString:@"="]];
+}
+
+static NSString *QDAppVersion(void) {
+    return [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"0";
+}
+
+static BOOL QDValidVersion(NSString *value) {
+    if (![value isKindOfClass:NSString.class] || value.length < 1 || value.length > 32)
+        return NO;
+    NSCharacterSet *invalid = [NSCharacterSet characterSetWithCharactersInString:
+        @"0123456789."].invertedSet;
+    if ([value rangeOfCharacterFromSet:invalid].location != NSNotFound) return NO;
+    for (NSString *part in [value componentsSeparatedByString:@"."])
+        if (!part.length) return NO;
+    return YES;
 }
 
 static NSData *QDDecodeBase64URL(NSString *value) {
@@ -271,7 +288,7 @@ static NSDictionary *QDRefresh(NSString *pairingCode, NSError **failure) {
         return nil;
     }
     NSString *installation = identity[@"installationId"];
-    NSString *version = @"0.2";
+    NSString *version = QDAppVersion();
     long long timestamp = (long long)(NSDate.date.timeIntervalSince1970 * 1000);
     NSString *nonce = QDNonce();
     NSMutableDictionary *request;
@@ -578,8 +595,10 @@ static void QDRepaint(void) {
 @property(nonatomic) BOOL controlDown;
 @property(nonatomic) BOOL altDown;
 @property(nonatomic, strong) dispatch_source_t urlTimer;
-@property(nonatomic) BOOL authPromptShown;
+@property(nonatomic) BOOL authCheckRunning;
 @property(nonatomic) BOOL awaitingPairCode;
+@property(nonatomic) BOOL updateBlocked;
+@property(nonatomic) BOOL javaStarted;
 @end
 
 static NSString *RunJava(int width, int height) {
@@ -678,6 +697,8 @@ static NSString *RunJava(int width, int height) {
     NSCAssert([QDTranscript(@"D", @[@"x"]) isEqualToData:
         [@"1:D\n1:x" dataUsingEncoding:NSUTF8StringEncoding]],
         @"QuackDuck auth transcript mismatch");
+    NSCAssert(QDValidVersion(@"0.3") && !QDValidVersion(@"0..3"),
+        @"QuackDuck version validation mismatch");
     QDDisableMicrophoneRequest();
     UIViewController *controller = [UIViewController new];
     controller.view.backgroundColor = UIColor.blackColor;
@@ -750,29 +771,106 @@ static NSString *RunJava(int width, int height) {
     __weak AppDelegate *weakSelf = self;
     self.surface.firstFrame = ^{
         weakSelf.status.hidden = YES;
-        [weakSelf checkQuackDuckAuth];
     };
-    [self.surface startDisplayLoop];
+    [self checkMandatoryUpdate];
+    return YES;
+}
 
+- (void)checkMandatoryUpdate {
+    self.updateBlocked = NO;
+    self.status.hidden = NO;
+    self.status.text = @"Checking for QuackDuck updates…";
+    NSString *url = [NSString stringWithFormat:@"%@?t=%.0f", QDLatestPlistURL,
+                     NSDate.date.timeIntervalSince1970];
+    NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:url]];
+    request.timeoutInterval = 10;
+    [request setValue:@"no-store" forHTTPHeaderField:@"cache-control"];
+    [[[NSURLSession sharedSession] dataTaskWithRequest:request
+        completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+            NSDictionary *plist = data.length <= 65536 ?
+                [NSPropertyListSerialization propertyListWithData:data options:0
+                    format:nil error:nil] : nil;
+            NSString *latest = [plist isKindOfClass:NSDictionary.class]
+                ? plist[@"CFBundleShortVersionString"] : nil;
+            NSInteger status = [(NSHTTPURLResponse *)response statusCode];
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if (error || status != 200 || !QDValidVersion(latest)) {
+                    [self blockForUpdate:@"The current release could not be verified. Check your connection and try again."];
+                    return;
+                }
+                NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+                NSString *highest = [defaults stringForKey:@"qd-highest-ios-version"];
+                if (QDValidVersion(highest) &&
+                    [latest compare:highest options:NSNumericSearch] == NSOrderedAscending) {
+                    [self blockForUpdate:@"The QuackDuck release channel moved backwards and cannot be trusted."];
+                    return;
+                }
+                if (!highest || [latest compare:highest options:NSNumericSearch] == NSOrderedDescending) {
+                    [defaults setObject:latest forKey:@"qd-highest-ios-version"];
+                }
+                if ([latest compare:QDAppVersion() options:NSNumericSearch] == NSOrderedDescending) {
+                    [self blockForUpdate:[NSString stringWithFormat:
+                        @"QuackDuck %@ is required before RuneLite can start.", latest]];
+                    return;
+                }
+                QDRecord(@"UPDATE_GATE_OK");
+                self.updateBlocked = NO;
+                [self checkQuackDuckAuth];
+            });
+        }] resume];
+}
+
+- (void)blockForUpdate:(NSString *)message {
+    self.updateBlocked = YES;
+    self.status.hidden = NO;
+    self.status.text = message;
+    if (self.window.rootViewController.presentedViewController) return;
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"QuackDuck update"
+        message:message preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Open update page"
+        style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) {
+            [UIApplication.sharedApplication openURL:[NSURL URLWithString:QDAccountURL]
+                options:@{} completionHandler:nil];
+        }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Check again"
+        style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) {
+            [self checkMandatoryUpdate];
+        }]];
+    [self.window.rootViewController presentViewController:alert animated:YES completion:nil];
+}
+
+- (void)checkQuackDuckAuth {
+    if (self.authCheckRunning || self.javaStarted) return;
+    self.authCheckRunning = YES;
+    self.status.hidden = NO;
+    self.status.text = @"Checking QuackDuck access…";
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        NSError *error = nil;
+        NSDictionary *profile = QDRefresh(nil, &error);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            self.authCheckRunning = NO;
+            if ([profile[@"authorized"] boolValue]) [self startRuneLite];
+            else {
+                self.status.text = @"QuackDuck sign-in is required.";
+                [self presentQuackDuckLogin:error.localizedDescription];
+#if TARGET_OS_SIMULATOR
+                if (getenv("QD_TEST_ALLOW_UNAUTH")) [self startRuneLite];
+#endif
+            }
+        });
+    });
+}
+
+- (void)startRuneLite {
+    if (self.javaStarted) return;
+    self.javaStarted = YES;
+    self.status.text = @"Starting RuneLite…";
+    [self.surface startDisplayLoop];
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         NSString *result = RunJava(self.surface.pixelWidth, self.surface.pixelHeight);
         dispatch_async(dispatch_get_main_queue(), ^{
             self.status.hidden = NO;
             self.status.text = result;
-        });
-    });
-    return YES;
-}
-
-- (void)checkQuackDuckAuth {
-    if (self.authPromptShown) return;
-    self.authPromptShown = YES;
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-        NSError *error = nil;
-        NSDictionary *profile = QDRefresh(nil, &error);
-        if ([profile[@"authorized"] boolValue]) return;
-        dispatch_async(dispatch_get_main_queue(), ^{
-            [self presentQuackDuckLogin:error.localizedDescription];
         });
     });
 }
@@ -786,8 +884,6 @@ static NSString *RunJava(int width, int height) {
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:
         @"Link your QuackDuck account" message:message
         preferredStyle:UIAlertControllerStyleAlert];
-    [alert addAction:[UIAlertAction actionWithTitle:@"Later"
-        style:UIAlertActionStyleCancel handler:nil]];
     [alert addAction:[UIAlertAction actionWithTitle:@"Enter Code"
         style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) {
             [self presentPairCode];
@@ -842,16 +938,22 @@ static NSString *RunJava(int width, int height) {
                 ([profile[@"authorized"] boolValue] ? @"QuackDuck linked" : @"Unable to link")
                 message:message preferredStyle:UIAlertControllerStyleAlert];
             [result addAction:[UIAlertAction actionWithTitle:@"OK"
-                style:UIAlertActionStyleDefault handler:nil]];
+                style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) {
+                    if ([profile[@"authorized"] boolValue]) [self startRuneLite];
+                    else [self presentQuackDuckLogin:nil];
+                }]];
             [self.window.rootViewController presentViewController:result animated:YES completion:nil];
         });
     });
 }
 
 - (void)applicationDidBecomeActive:(UIApplication *)application {
-    if (!self.awaitingPairCode) return;
-    self.awaitingPairCode = NO;
-    dispatch_async(dispatch_get_main_queue(), ^{ [self presentPairCode]; });
+    if (self.awaitingPairCode) {
+        self.awaitingPairCode = NO;
+        dispatch_async(dispatch_get_main_queue(), ^{ [self presentPairCode]; });
+    } else if (self.updateBlocked) {
+        dispatch_async(dispatch_get_main_queue(), ^{ [self checkMandatoryUpdate]; });
+    }
 }
 
 - (void)setModifierButton:(UIButton *)button active:(BOOL)active {

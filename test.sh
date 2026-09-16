@@ -28,7 +28,8 @@ logger_pid=$!
 launch_pid=''
 trap 'kill "$logger_pid" ${launch_pid:-} 2>/dev/null || true; xcrun simctl shutdown "$device" 2>/dev/null || true' EXIT
 
-xcrun simctl launch "$device" "$bundle_id" > "$build/launch.log" 2>&1 &
+SIMCTL_CHILD_QD_TEST_ALLOW_UNAUTH=1 \
+  xcrun simctl launch "$device" "$bundle_id" > "$build/launch.log" 2>&1 &
 launch_pid=$!
 
 for _ in {1..90}; do
@@ -41,6 +42,7 @@ for _ in {1..90}; do
       cp "$data/Documents/java-ok.txt" "$build/java-ok.txt"
       [[ ! -f "$data/Documents/runelite.log" ]] || cp "$data/Documents/runelite.log" "$build/runelite.log"
       grep -q 'QD_IOS: mobile window layout applied' "$build/runelite.log"
+      grep -q 'UPDATE_GATE_OK' "$build/java-ok.txt"
       grep -q 'AUTH_PROMPT_OK' "$build/java-ok.txt"
       ! grep -q 'AUTH_KEY_FAILED' "$build/java-ok.txt"
       xcrun simctl io "$device" screenshot "$build/screenshot.png"
