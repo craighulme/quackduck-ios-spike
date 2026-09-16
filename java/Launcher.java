@@ -11,6 +11,7 @@ import java.lang.reflect.InvocationTargetException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Properties;
+import javax.swing.SwingUtilities;
 
 public final class Launcher {
     public static void main(String[] args) throws Throwable {
@@ -82,7 +83,24 @@ public final class Launcher {
                     set.invoke(config, "runelite", "automaticResizeType", "KEEP_WINDOW_SIZE");
                     set.invoke(config, "runelite", "gameSize",
                         (screen.width - 40) + "x" + (screen.height - 40));
-                    System.out.println("QD_IOS: mobile window layout applied");
+                    Class<?> uiClass = Class.forName("net.runelite.client.ui.ClientUI");
+                    Object ui = Class.forName("com.google.inject.Injector")
+                        .getMethod("getInstance", Class.class).invoke(injector, uiClass);
+                    var applyGameSize = uiClass.getDeclaredMethod("applyGameSize", boolean.class);
+                    applyGameSize.setAccessible(true);
+                    SwingUtilities.invokeAndWait(() -> {
+                        try {
+                            applyGameSize.invoke(ui, true);
+                        } catch (ReflectiveOperationException failure) {
+                            throw new RuntimeException(failure);
+                        }
+                    });
+                    int width = (int) uiClass.getMethod("getWidth").invoke(ui);
+                    int height = (int) uiClass.getMethod("getHeight").invoke(ui);
+                    if (width <= 765 || height < 503) {
+                        throw new IllegalStateException("canvas remained " + width + "x" + height);
+                    }
+                    System.out.println("QD_IOS: mobile window layout applied " + width + "x" + height);
                     return;
                 } catch (Throwable failure) {
                     lastFailure = failure;
