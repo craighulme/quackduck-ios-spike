@@ -39,6 +39,7 @@ for _ in {1..90}; do
     if grep -q 'RUNITELITE_CLASS_OK' "$build/java-ok.txt"; then
       sleep 45
       [[ ! -f "$data/Documents/runelite.log" ]] || cp "$data/Documents/runelite.log" "$build/runelite.log"
+      grep -q 'QD_IOS: mobile window layout applied' "$build/runelite.log"
       xcrun simctl io "$device" screenshot "$build/screenshot.png"
       exit 0
     fi
