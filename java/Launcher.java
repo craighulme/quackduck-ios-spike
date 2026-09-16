@@ -13,6 +13,7 @@ import java.lang.reflect.InvocationTargetException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Properties;
+import javax.swing.BorderFactory;
 import javax.swing.SwingUtilities;
 
 public final class Launcher {
@@ -50,13 +51,24 @@ public final class Launcher {
     }
 
     public static void repaintAllWindows() {
-        SwingUtilities.invokeLater(() -> {
-            for (Window window : Window.getWindows()) {
-                window.validate();
-                window.repaint();
+        Thread pulses = new Thread(() -> {
+            for (int pulse = 0; pulse < 4; pulse++) {
+                SwingUtilities.invokeLater(() -> {
+                    for (Window window : Window.getWindows()) {
+                        window.validate();
+                        window.repaint();
+                    }
+                    Toolkit.getDefaultToolkit().sync();
+                });
+                try {
+                    Thread.sleep(75);
+                } catch (InterruptedException ignored) {
+                    return;
+                }
             }
-            Toolkit.getDefaultToolkit().sync();
-        });
+        }, "quackduck-repaint");
+        pulses.setDaemon(true);
+        pulses.start();
     }
 
     private static Rectangle configureMobileWindow() throws Exception {
@@ -104,11 +116,16 @@ public final class Launcher {
                     var contentField = uiClass.getDeclaredField("content");
                     contentField.setAccessible(true);
                     var layout = ((java.awt.Container) contentField.get(ui)).getLayout();
+                    var sidebarField = uiClass.getDeclaredField("sidebar");
+                    sidebarField.setAccessible(true);
+                    var sidebar = (javax.swing.JComponent) sidebarField.get(ui);
                     var forceClientSize = layout.getClass()
                         .getDeclaredMethod("forceClientSize", int.class, int.class);
                     forceClientSize.setAccessible(true);
                     SwingUtilities.invokeAndWait(() -> {
                         try {
+                            // Keep the real RuneLite tabs clear of landscape rounded corners.
+                            sidebar.setBorder(BorderFactory.createEmptyBorder(18, 0, 18, 8));
                             forceClientSize.invoke(layout, targetWidth, targetHeight);
                         } catch (ReflectiveOperationException failure) {
                             throw new RuntimeException(failure);
