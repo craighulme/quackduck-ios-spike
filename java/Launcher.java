@@ -59,7 +59,7 @@ public final class Launcher {
         }
         settings.setProperty("runelite.automaticResizeType", "KEEP_WINDOW_SIZE");
         settings.setProperty("runelite.gameSize",
-            (screen.width - 40) + "x" + (screen.height - 40));
+            (screen.width - 40) + "x" + Math.max(503, screen.height - 37));
         settings.setProperty("runelite.clientBounds",
             "0:0:" + screen.width + ":" + screen.height + ":c");
         try (OutputStream out = Files.newOutputStream(file)) {
@@ -80,24 +80,30 @@ public final class Launcher {
                         .getMethod("getInstance", Class.class).invoke(injector, configClass);
                     var set = configClass.getMethod("setConfiguration",
                         String.class, String.class, String.class);
+                    int targetWidth = screen.width - 40;
+                    int targetHeight = Math.max(503, screen.height - 37);
                     set.invoke(config, "runelite", "automaticResizeType", "KEEP_WINDOW_SIZE");
                     set.invoke(config, "runelite", "gameSize",
-                        (screen.width - 40) + "x" + (screen.height - 40));
+                        targetWidth + "x" + targetHeight);
                     Class<?> uiClass = Class.forName("net.runelite.client.ui.ClientUI");
                     Object ui = Class.forName("com.google.inject.Injector")
                         .getMethod("getInstance", Class.class).invoke(injector, uiClass);
-                    var applyGameSize = uiClass.getDeclaredMethod("applyGameSize", boolean.class);
-                    applyGameSize.setAccessible(true);
+                    var contentField = uiClass.getDeclaredField("content");
+                    contentField.setAccessible(true);
+                    var layout = ((java.awt.Container) contentField.get(ui)).getLayout();
+                    var forceClientSize = layout.getClass()
+                        .getDeclaredMethod("forceClientSize", int.class, int.class);
+                    forceClientSize.setAccessible(true);
                     SwingUtilities.invokeAndWait(() -> {
                         try {
-                            applyGameSize.invoke(ui, true);
+                            forceClientSize.invoke(layout, targetWidth, targetHeight);
                         } catch (ReflectiveOperationException failure) {
                             throw new RuntimeException(failure);
                         }
                     });
                     int width = (int) uiClass.getMethod("getWidth").invoke(ui);
                     int height = (int) uiClass.getMethod("getHeight").invoke(ui);
-                    if (width <= 765 || height < 503) {
+                    if (width < targetWidth || height < targetHeight) {
                         throw new IllegalStateException("canvas remained " + width + "x" + height);
                     }
                     System.out.println("QD_IOS: mobile window layout applied " + width + "x" + height);
