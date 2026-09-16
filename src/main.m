@@ -84,8 +84,16 @@ static BOOL QDKeychainWrite(NSString *account, NSData *data) {
     return status == errSecSuccess;
 }
 
+static void QDSaveIdentity(NSDictionary *identity) {
+    NSData *json = [NSJSONSerialization dataWithJSONObject:identity options:0 error:nil];
+    if (!json) return;
+    QDKeychainWrite(QDIdentityAccount, json);
+    [NSUserDefaults.standardUserDefaults setObject:json forKey:QDIdentityAccount];
+}
+
 static NSMutableDictionary *QDIdentity(void) {
     NSData *stored = QDKeychainRead(QDIdentityAccount);
+    if (!stored) stored = [NSUserDefaults.standardUserDefaults objectForKey:QDIdentityAccount];
     NSDictionary *identity = stored ? [NSJSONSerialization JSONObjectWithData:stored
         options:0 error:nil] : nil;
     if ([identity[@"installationId"] isKindOfClass:NSString.class]) {
@@ -95,8 +103,7 @@ static NSMutableDictionary *QDIdentity(void) {
         @"installationId": [@"mobile-ios-" stringByAppendingString:NSUUID.UUID.UUIDString],
         @"sequence": @0
     } mutableCopy];
-    NSData *json = [NSJSONSerialization dataWithJSONObject:created options:0 error:nil];
-    QDKeychainWrite(QDIdentityAccount, json);
+    QDSaveIdentity(created);
     return created;
 }
 
@@ -111,6 +118,20 @@ static SecKeyRef QDPrivateKey(void) {
     CFTypeRef result = NULL;
     if (SecItemCopyMatching((__bridge CFDictionaryRef)query, &result) == errSecSuccess)
         return (SecKeyRef)result;
+    NSString *documents = NSSearchPathForDirectoriesInDomains(
+        NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
+    NSString *fallbackPath = [documents stringByAppendingPathComponent:@"qd-device-key.bin"];
+    NSData *stored = [NSData dataWithContentsOfFile:fallbackPath];
+    NSDictionary *rawAttributes = @{
+        (__bridge id)kSecAttrKeyType: (__bridge id)kSecAttrKeyTypeECSECPrimeRandom,
+        (__bridge id)kSecAttrKeyClass: (__bridge id)kSecAttrKeyClassPrivate,
+        (__bridge id)kSecAttrKeySizeInBits: @256
+    };
+    if (stored.length) {
+        SecKeyRef restored = SecKeyCreateWithData((__bridge CFDataRef)stored,
+            (__bridge CFDictionaryRef)rawAttributes, NULL);
+        if (restored) return restored;
+    }
     NSDictionary *attributes = @{
         (__bridge id)kSecAttrKeyType: (__bridge id)kSecAttrKeyTypeECSECPrimeRandom,
         (__bridge id)kSecAttrKeySizeInBits: @256,
@@ -123,8 +144,19 @@ static SecKeyRef QDPrivateKey(void) {
     };
     CFErrorRef error = NULL;
     SecKeyRef key = SecKeyCreateRandomKey((__bridge CFDictionaryRef)attributes, &error);
-    if (!key && error) {
-        NSLog(@"QD_IOS: device key error %@", (__bridge NSError *)error);
+    if (!key) {
+        NSDictionary *ephemeralAttributes = @{
+            (__bridge id)kSecAttrKeyType: (__bridge id)kSecAttrKeyTypeECSECPrimeRandom,
+            (__bridge id)kSecAttrKeySizeInBits: @256
+        };
+        key = SecKeyCreateRandomKey((__bridge CFDictionaryRef)ephemeralAttributes, NULL);
+        NSData *raw = key ? CFBridgingRelease(SecKeyCopyExternalRepresentation(key, NULL)) : nil;
+        if (raw.length) {
+            [raw writeToFile:fallbackPath options:NSDataWritingFileProtectionComplete error:nil];
+        }
+    }
+    if (!key) {
+        NSLog(@"QD_IOS: device key error %@", error ? (__bridge NSError *)error : nil);
         QDRecord(@"AUTH_KEY_FAILED");
     }
     if (error) CFRelease(error);
@@ -259,8 +291,7 @@ static NSDictionary *QDRefresh(NSString *pairingCode, NSError **failure) {
     } else {
         long long sequence = [identity[@"sequence"] longLongValue] + 1;
         identity[@"sequence"] = @(sequence);
-        QDKeychainWrite(QDIdentityAccount,
-            [NSJSONSerialization dataWithJSONObject:identity options:0 error:nil]);
+        QDSaveIdentity(identity);
         request = [@{
             @"action": @"status", @"installationId": installation,
             @"sequence": @(sequence), @"timestamp": @(timestamp),

@@ -77,5 +77,5 @@ while IFS= read -r -d '' file; do
   fi
 done < <(find "$jre" -type f -print0)
 
-codesign --force --deep --sign - --entitlements "$root/Entitlements.plist" "$app"
+codesign --force --deep --sign - "$app"
 ditto -c -k --sequesterRsrc --keepParent "$app" "$build/QuackDuckJVM.zip"
