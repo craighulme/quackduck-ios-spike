@@ -61,7 +61,7 @@ xcrun --sdk iphonesimulator clang \
   -arch arm64 -mios-simulator-version-min=14.0 -fobjc-arc \
   -isysroot "$sdk" -I"$amethyst/Natives" \
   "$root/src/main.m" \
-  -framework UIKit -framework Foundation -framework AVFoundation \
+  -framework UIKit -framework Foundation -framework AVFoundation -framework Security \
   -framework QuartzCore -framework CoreGraphics \
   -o "$app/QuackDuckJVM"
 

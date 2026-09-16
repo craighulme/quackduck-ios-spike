@@ -1,6 +1,8 @@
 #import <UIKit/UIKit.h>
 #import <AVFoundation/AVFoundation.h>
 #import <QuartzCore/QuartzCore.h>
+#import <Security/Security.h>
+#import <CommonCrypto/CommonDigest.h>
 #import <objc/runtime.h>
 #include <dlfcn.h>
 #include <jni.h>
@@ -17,6 +19,272 @@ static jclass gInputClass;
 static jmethodID gReceiveInput;
 static jclass gLauncherClass;
 static jmethodID gRepaintWindows;
+
+static NSString *const QDAuthURL = @"https://quackduck.dev/api/mobile/device";
+static NSString *const QDAccountURL = @"https://quackduck.dev/mobile";
+static NSString *const QDServerPublicKey = @"MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEiJ6JX7xxSxX12gR5E8bv+jVIl0VOy3b4hez05a0KkNwQjUJDMT2PpK6UbiR3ZV1WvP/PsB5/SCmtWqPYNx0U3Q==";
+static NSString *const QDKeyTag = @"dev.quackduck.mobile-auth-key-v1";
+static NSString *const QDIdentityAccount = @"mobile-auth-identity-v1";
+
+static NSString *QDBase64URL(NSData *data) {
+    NSString *value = [data base64EncodedStringWithOptions:0];
+    value = [value stringByReplacingOccurrencesOfString:@"+" withString:@"-"];
+    value = [value stringByReplacingOccurrencesOfString:@"/" withString:@"_"];
+    return [value stringByTrimmingCharactersInSet:
+        [NSCharacterSet characterSetWithCharactersInString:@"="]];
+}
+
+static NSData *QDDecodeBase64URL(NSString *value) {
+    value = [value stringByReplacingOccurrencesOfString:@"-" withString:@"+"];
+    value = [value stringByReplacingOccurrencesOfString:@"_" withString:@"/"];
+    while (value.length % 4) value = [value stringByAppendingString:@"="];
+    return [[NSData alloc] initWithBase64EncodedString:value options:0];
+}
+
+static NSData *QDKeychainRead(NSString *account) {
+    NSDictionary *query = @{
+        (__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
+        (__bridge id)kSecAttrService: @"dev.quackduck.runelite",
+        (__bridge id)kSecAttrAccount: account,
+        (__bridge id)kSecReturnData: @YES,
+        (__bridge id)kSecMatchLimit: (__bridge id)kSecMatchLimitOne
+    };
+    CFTypeRef result = NULL;
+    return SecItemCopyMatching((__bridge CFDictionaryRef)query, &result) == errSecSuccess
+        ? CFBridgingRelease(result) : nil;
+}
+
+static BOOL QDKeychainWrite(NSString *account, NSData *data) {
+    NSDictionary *key = @{
+        (__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
+        (__bridge id)kSecAttrService: @"dev.quackduck.runelite",
+        (__bridge id)kSecAttrAccount: account
+    };
+    NSDictionary *change = @{(__bridge id)kSecValueData: data};
+    OSStatus status = SecItemUpdate((__bridge CFDictionaryRef)key,
+                                    (__bridge CFDictionaryRef)change);
+    if (status == errSecItemNotFound) {
+        NSMutableDictionary *insert = [key mutableCopy];
+        insert[(__bridge id)kSecValueData] = data;
+        insert[(__bridge id)kSecAttrAccessible] =
+            (__bridge id)kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly;
+        status = SecItemAdd((__bridge CFDictionaryRef)insert, NULL);
+    }
+    return status == errSecSuccess;
+}
+
+static NSMutableDictionary *QDIdentity(void) {
+    NSData *stored = QDKeychainRead(QDIdentityAccount);
+    NSDictionary *identity = stored ? [NSJSONSerialization JSONObjectWithData:stored
+        options:0 error:nil] : nil;
+    if ([identity[@"installationId"] isKindOfClass:NSString.class]) {
+        return [identity mutableCopy];
+    }
+    NSMutableDictionary *created = [@{
+        @"installationId": [@"mobile-ios-" stringByAppendingString:NSUUID.UUID.UUIDString],
+        @"sequence": @0
+    } mutableCopy];
+    NSData *json = [NSJSONSerialization dataWithJSONObject:created options:0 error:nil];
+    QDKeychainWrite(QDIdentityAccount, json);
+    return created;
+}
+
+static SecKeyRef QDPrivateKey(void) {
+    NSData *tag = [QDKeyTag dataUsingEncoding:NSUTF8StringEncoding];
+    NSDictionary *query = @{
+        (__bridge id)kSecClass: (__bridge id)kSecClassKey,
+        (__bridge id)kSecAttrApplicationTag: tag,
+        (__bridge id)kSecAttrKeyType: (__bridge id)kSecAttrKeyTypeECSECPrimeRandom,
+        (__bridge id)kSecReturnRef: @YES
+    };
+    CFTypeRef result = NULL;
+    if (SecItemCopyMatching((__bridge CFDictionaryRef)query, &result) == errSecSuccess)
+        return (SecKeyRef)result;
+    NSDictionary *attributes = @{
+        (__bridge id)kSecAttrKeyType: (__bridge id)kSecAttrKeyTypeECSECPrimeRandom,
+        (__bridge id)kSecAttrKeySizeInBits: @256,
+        (__bridge id)kSecPrivateKeyAttrs: @{
+            (__bridge id)kSecAttrIsPermanent: @YES,
+            (__bridge id)kSecAttrApplicationTag: tag,
+            (__bridge id)kSecAttrAccessible:
+                (__bridge id)kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        }
+    };
+    return SecKeyCreateRandomKey((__bridge CFDictionaryRef)attributes, NULL);
+}
+
+static NSData *QDPublicKey(SecKeyRef privateKey) {
+    SecKeyRef publicKey = SecKeyCopyPublicKey(privateKey);
+    NSData *raw = publicKey ? CFBridgingRelease(SecKeyCopyExternalRepresentation(publicKey, NULL)) : nil;
+    if (publicKey) CFRelease(publicKey);
+    const unsigned char prefix[] = {
+        0x30,0x59,0x30,0x13,0x06,0x07,0x2A,0x86,0x48,0xCE,0x3D,0x02,0x01,
+        0x06,0x08,0x2A,0x86,0x48,0xCE,0x3D,0x03,0x01,0x07,0x03,0x42,0x00
+    };
+    NSMutableData *x509 = [NSMutableData dataWithBytes:prefix length:sizeof(prefix)];
+    if (raw) [x509 appendData:raw];
+    return raw.length == 65 ? x509 : nil;
+}
+
+static NSData *QDTranscript(NSString *domain, NSArray<NSString *> *values) {
+    NSMutableArray *parts = [NSMutableArray arrayWithObject:domain];
+    for (NSString *value in values) {
+        NSUInteger bytes = [value lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
+        [parts addObject:[NSString stringWithFormat:@"%lu:%@", (unsigned long)bytes, value]];
+    }
+    return [[parts componentsJoinedByString:@"\n"] dataUsingEncoding:NSUTF8StringEncoding];
+}
+
+static NSString *QDSign(SecKeyRef key, NSData *message) {
+    CFErrorRef error = NULL;
+    NSData *signature = CFBridgingRelease(SecKeyCreateSignature(key,
+        kSecKeyAlgorithmECDSASignatureMessageX962SHA256,
+        (__bridge CFDataRef)message, &error));
+    if (error) CFRelease(error);
+    return signature ? QDBase64URL(signature) : nil;
+}
+
+static NSString *QDNonce(void) {
+    unsigned char bytes[24];
+    SecRandomCopyBytes(kSecRandomDefault, sizeof(bytes), bytes);
+    return QDBase64URL([NSData dataWithBytes:bytes length:sizeof(bytes)]);
+}
+
+static NSDictionary *QDPost(NSDictionary *body, NSError **failure) {
+    NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:
+        [NSURL URLWithString:QDAuthURL]];
+    request.HTTPMethod = @"POST";
+    request.timeoutInterval = 15;
+    [request setValue:@"application/json" forHTTPHeaderField:@"content-type"];
+    request.HTTPBody = [NSJSONSerialization dataWithJSONObject:body options:0 error:failure];
+    if (!request.HTTPBody) return nil;
+    dispatch_semaphore_t done = dispatch_semaphore_create(0);
+    __block NSData *responseData;
+    __block NSError *requestError;
+    __block NSInteger status;
+    [[[NSURLSession sharedSession] dataTaskWithRequest:request
+        completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+            responseData = data;
+            requestError = error;
+            status = [(NSHTTPURLResponse *)response statusCode];
+            dispatch_semaphore_signal(done);
+        }] resume];
+    dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, 20 * NSEC_PER_SEC));
+    NSDictionary *json = responseData ? [NSJSONSerialization JSONObjectWithData:responseData
+        options:0 error:nil] : nil;
+    if (requestError || status < 200 || status > 299 || !json) {
+        NSString *message = json[@"error"] ?: requestError.localizedDescription ?: @"QuackDuck did not respond";
+        if (failure) *failure = [NSError errorWithDomain:@"QuackDuck" code:status
+            userInfo:@{NSLocalizedDescriptionKey: message}];
+        return nil;
+    }
+    return json;
+}
+
+static NSDictionary *QDVerifyEnvelope(NSDictionary *envelope, NSError **failure) {
+    NSData *payload = QDDecodeBase64URL(envelope[@"payload"]);
+    NSData *signature = QDDecodeBase64URL(envelope[@"signature"]);
+    NSData *serverX509 = [[NSData alloc] initWithBase64EncodedString:QDServerPublicKey options:0];
+    BOOL metadata = [envelope[@"type"] isEqual:@"signed"] &&
+        [envelope[@"algorithm"] isEqual:@"ES256"] &&
+        [envelope[@"keyId"] isEqual:@"session-server-v1"];
+    if (metadata && serverX509.length == 91 && payload && signature) {
+        NSData *raw = [serverX509 subdataWithRange:NSMakeRange(26, 65)];
+        NSDictionary *attributes = @{
+            (__bridge id)kSecAttrKeyType: (__bridge id)kSecAttrKeyTypeECSECPrimeRandom,
+            (__bridge id)kSecAttrKeyClass: (__bridge id)kSecAttrKeyClassPublic,
+            (__bridge id)kSecAttrKeySizeInBits: @256
+        };
+        SecKeyRef key = SecKeyCreateWithData((__bridge CFDataRef)raw,
+                                             (__bridge CFDictionaryRef)attributes, NULL);
+        BOOL valid = key && SecKeyVerifySignature(key,
+            kSecKeyAlgorithmECDSASignatureMessageX962SHA256,
+            (__bridge CFDataRef)payload, (__bridge CFDataRef)signature, NULL);
+        if (key) CFRelease(key);
+        if (valid) return [NSJSONSerialization JSONObjectWithData:payload options:0 error:failure];
+    }
+    if (failure) *failure = [NSError errorWithDomain:@"QuackDuck" code:0
+        userInfo:@{NSLocalizedDescriptionKey: @"QuackDuck signature verification failed"}];
+    return nil;
+}
+
+static NSDictionary *QDRefresh(NSString *pairingCode, NSError **failure) {
+    NSMutableDictionary *identity = QDIdentity();
+    SecKeyRef key = QDPrivateKey();
+    NSData *publicKey = key ? QDPublicKey(key) : nil;
+    if (!key || !publicKey) {
+        if (key) CFRelease(key);
+        if (failure) *failure = [NSError errorWithDomain:@"QuackDuck" code:0
+            userInfo:@{NSLocalizedDescriptionKey: @"Could not create the device identity"}];
+        return nil;
+    }
+    NSString *installation = identity[@"installationId"];
+    NSString *version = @"0.2";
+    long long timestamp = (long long)(NSDate.date.timeIntervalSince1970 * 1000);
+    NSString *nonce = QDNonce();
+    NSMutableDictionary *request;
+    if (pairingCode.length) {
+        NSString *public64 = [publicKey base64EncodedStringWithOptions:0];
+        unsigned char digest[CC_SHA256_DIGEST_LENGTH];
+        CC_SHA256(publicKey.bytes, (CC_LONG)publicKey.length, digest);
+        NSString *fingerprint = QDBase64URL([NSData dataWithBytes:digest length:sizeof(digest)]);
+        request = [@{
+            @"action": @"pair", @"code": pairingCode,
+            @"installationId": installation, @"deviceFingerprint": fingerprint,
+            @"devicePublicKey": public64, @"appVersion": version,
+            @"timestamp": @(timestamp), @"nonce": nonce
+        } mutableCopy];
+        request[@"signature"] = QDSign(key, QDTranscript(@"QD_MOBILE_PAIR_V1", @[
+            pairingCode, installation, fingerprint, public64, version,
+            [@(timestamp) stringValue], nonce
+        ]));
+    } else {
+        long long sequence = [identity[@"sequence"] longLongValue] + 1;
+        identity[@"sequence"] = @(sequence);
+        QDKeychainWrite(QDIdentityAccount,
+            [NSJSONSerialization dataWithJSONObject:identity options:0 error:nil]);
+        request = [@{
+            @"action": @"status", @"installationId": installation,
+            @"sequence": @(sequence), @"timestamp": @(timestamp),
+            @"nonce": nonce, @"appVersion": version
+        } mutableCopy];
+        request[@"signature"] = QDSign(key, QDTranscript(@"QD_MOBILE_REQUEST_V1", @[
+            @"status", installation, [@(sequence) stringValue],
+            [@(timestamp) stringValue], nonce, version, @""
+        ]));
+    }
+    CFRelease(key);
+    if (!request[@"signature"]) return nil;
+    NSDictionary *envelope = QDPost(request, failure);
+    if (!envelope) return nil;
+    NSDictionary *payload = QDVerifyEnvelope(envelope, failure);
+    if (!payload) return nil;
+    if (pairingCode.length) {
+        if (![payload[@"type"] isEqual:@"mobile_pairing_complete"]) {
+            if (failure) *failure = [NSError errorWithDomain:@"QuackDuck" code:0
+                userInfo:@{NSLocalizedDescriptionKey: @"Unexpected pairing response"}];
+            return nil;
+        }
+        return QDRefresh(nil, failure);
+    }
+    long long now = (long long)(NSDate.date.timeIntervalSince1970 * 1000);
+    if (![payload[@"type"] isEqual:@"mobile_profile"] ||
+        [payload[@"expiresAt"] longLongValue] <= now) {
+        if (failure) *failure = [NSError errorWithDomain:@"QuackDuck" code:0
+            userInfo:@{NSLocalizedDescriptionKey: @"QuackDuck returned an expired profile"}];
+        return nil;
+    }
+    NSDictionary *profile = payload[@"result"];
+    NSString *discord = [profile[@"discordName"] isKindOfClass:NSString.class]
+        ? profile[@"discordName"] : @"";
+    NSString *tier = [profile[@"tier"] isKindOfClass:NSString.class]
+        ? profile[@"tier"] : @"free";
+    return @{
+        @"authorized": @([profile[@"accessActive"] boolValue]),
+        @"discordName": discord,
+        @"tier": tier
+    };
+}
 
 static void QDDisableMicrophoneRequest(void) {
     Method method = class_getInstanceMethod(AVAudioSession.class,
@@ -235,6 +503,8 @@ static void QDRepaint(void) {
 @property(nonatomic) BOOL controlDown;
 @property(nonatomic) BOOL altDown;
 @property(nonatomic, strong) dispatch_source_t urlTimer;
+@property(nonatomic) BOOL authPromptShown;
+@property(nonatomic) BOOL awaitingPairCode;
 @end
 
 static NSString *RunJava(int width, int height) {
@@ -402,7 +672,10 @@ static NSString *RunJava(int width, int height) {
     if (self.surface.pixelWidth % 2) self.surface.pixelWidth--;
     if (self.surface.pixelHeight % 2) self.surface.pixelHeight--;
     __weak AppDelegate *weakSelf = self;
-    self.surface.firstFrame = ^{ weakSelf.status.hidden = YES; };
+    self.surface.firstFrame = ^{
+        weakSelf.status.hidden = YES;
+        [weakSelf checkQuackDuckAuth];
+    };
     [self.surface startDisplayLoop];
 
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
@@ -413,6 +686,95 @@ static NSString *RunJava(int width, int height) {
         });
     });
     return YES;
+}
+
+- (void)checkQuackDuckAuth {
+    if (self.authPromptShown) return;
+    self.authPromptShown = YES;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        NSError *error = nil;
+        NSDictionary *profile = QDRefresh(nil, &error);
+        if ([profile[@"authorized"] boolValue]) return;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self presentQuackDuckLogin:error.localizedDescription];
+        });
+    });
+}
+
+- (void)presentQuackDuckLogin:(NSString *)detail {
+    NSLog(@"QD_IOS: QuackDuck auth prompt");
+    NSString *message = detail.length
+        ? [@"Sign in with Discord, then enter the pairing code.\n\n" stringByAppendingString:detail]
+        : @"Sign in with Discord, then enter the pairing code shown on your QuackDuck account.";
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:
+        @"Link your QuackDuck account" message:message
+        preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Later"
+        style:UIAlertActionStyleCancel handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Enter Code"
+        style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) {
+            [self presentPairCode];
+        }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Login with Discord"
+        style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) {
+            self.awaitingPairCode = YES;
+            [UIApplication.sharedApplication openURL:[NSURL URLWithString:QDAccountURL]
+                options:@{} completionHandler:nil];
+        }]];
+    [self.window.rootViewController presentViewController:alert animated:YES completion:nil];
+}
+
+- (void)presentPairCode {
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Pair device"
+        message:@"Enter the code shown on quackduck.dev/mobile."
+        preferredStyle:UIAlertControllerStyleAlert];
+    [alert addTextFieldWithConfigurationHandler:^(UITextField *field) {
+        field.placeholder = @"Pairing code";
+        field.autocapitalizationType = UITextAutocapitalizationTypeAllCharacters;
+        field.autocorrectionType = UITextAutocorrectionTypeNo;
+    }];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel"
+        style:UIAlertActionStyleCancel handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Pair"
+        style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) {
+            NSString *code = alert.textFields.firstObject.text.uppercaseString;
+            NSCharacterSet *invalid = [NSCharacterSet alphanumericCharacterSet].invertedSet;
+            code = [[code componentsSeparatedByCharactersInSet:invalid] componentsJoinedByString:@""];
+            [self pairQuackDuck:code];
+        }]];
+    [self.window.rootViewController presentViewController:alert animated:YES completion:nil];
+}
+
+- (void)pairQuackDuck:(NSString *)code {
+    if (code.length < 8 || code.length > 32) {
+        [self presentQuackDuckLogin:@"That pairing code is not valid."];
+        return;
+    }
+    self.status.hidden = NO;
+    self.status.text = @"Linking QuackDuck…";
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        NSError *error = nil;
+        NSDictionary *profile = QDRefresh(code, &error);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            self.status.hidden = YES;
+            NSString *name = profile[@"discordName"];
+            NSString *message = [profile[@"authorized"] boolValue]
+                ? [NSString stringWithFormat:@"Linked as %@.", name.length ? name : @"Discord user"]
+                : (error.localizedDescription ?: @"This account does not currently have mobile access.");
+            UIAlertController *result = [UIAlertController alertControllerWithTitle:
+                ([profile[@"authorized"] boolValue] ? @"QuackDuck linked" : @"Unable to link")
+                message:message preferredStyle:UIAlertControllerStyleAlert];
+            [result addAction:[UIAlertAction actionWithTitle:@"OK"
+                style:UIAlertActionStyleDefault handler:nil]];
+            [self.window.rootViewController presentViewController:result animated:YES completion:nil];
+        });
+    });
+}
+
+- (void)applicationDidBecomeActive:(UIApplication *)application {
+    if (!self.awaitingPairCode) return;
+    self.awaitingPairCode = NO;
+    dispatch_async(dispatch_get_main_queue(), ^{ [self presentPairCode]; });
 }
 
 - (void)setModifierButton:(UIButton *)button active:(BOOL)active {
