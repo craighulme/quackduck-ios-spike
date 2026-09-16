@@ -69,25 +69,32 @@ public final class Launcher {
 
     private static void applyMobileWindowConfig(Class<?> runelite, Rectangle screen) {
         Thread worker = new Thread(() -> {
-            try {
-                Object injector;
-                do {
-                    injector = runelite.getMethod("getInjector").invoke(null);
-                    if (injector == null) Thread.sleep(100);
-                } while (injector == null);
-
-                Class<?> configClass = Class.forName("net.runelite.client.config.ConfigManager");
-                Object config = Class.forName("com.google.inject.Injector")
-                    .getMethod("getInstance", Class.class).invoke(injector, configClass);
-                var set = configClass.getMethod("setConfiguration",
-                    String.class, String.class, String.class);
-                set.invoke(config, "runelite", "automaticResizeType", "KEEP_WINDOW_SIZE");
-                set.invoke(config, "runelite", "gameSize",
-                    (screen.width - 40) + "x" + (screen.height - 40));
-                System.out.println("QD_IOS: mobile window layout applied");
-            } catch (Throwable failure) {
-                failure.printStackTrace();
+            Throwable lastFailure = null;
+            for (int attempt = 0; attempt < 300; attempt++) {
+                try {
+                    Object injector = runelite.getMethod("getInjector").invoke(null);
+                    if (injector == null) throw new IllegalStateException("injector not ready");
+                    Class<?> configClass = Class.forName("net.runelite.client.config.ConfigManager");
+                    Object config = Class.forName("com.google.inject.Injector")
+                        .getMethod("getInstance", Class.class).invoke(injector, configClass);
+                    var set = configClass.getMethod("setConfiguration",
+                        String.class, String.class, String.class);
+                    set.invoke(config, "runelite", "automaticResizeType", "KEEP_WINDOW_SIZE");
+                    set.invoke(config, "runelite", "gameSize",
+                        (screen.width - 40) + "x" + (screen.height - 40));
+                    System.out.println("QD_IOS: mobile window layout applied");
+                    return;
+                } catch (Throwable failure) {
+                    lastFailure = failure;
+                    try {
+                        Thread.sleep(100);
+                    } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                        return;
+                    }
+                }
             }
+            lastFailure.printStackTrace();
         }, "quackduck-window-layout");
         worker.setDaemon(true);
         worker.start();
