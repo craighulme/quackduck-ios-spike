@@ -3,6 +3,8 @@ package dev.quackduck;
 import java.awt.Font;
 import java.awt.GraphicsEnvironment;
 import java.awt.Rectangle;
+import java.awt.Toolkit;
+import java.awt.Window;
 import java.io.PrintWriter;
 import java.io.PrintStream;
 import java.io.InputStream;
@@ -32,7 +34,8 @@ public final class Launcher {
             Class<?> runelite = Class.forName("net.runelite.client.RuneLite");
             applyMobileWindowConfig(runelite, screen);
             Files.writeString(status, Files.readString(status) + "RUNITELITE_CLASS_OK\n");
-            runelite.getMethod("main", String[].class).invoke(null, (Object) args);
+            runelite.getMethod("main", String[].class).invoke(null,
+                (Object) new String[] { "--developer-mode" });
         } catch (Throwable failure) {
             if (failure instanceof InvocationTargetException && failure.getCause() != null) {
                 failure = failure.getCause();
@@ -44,6 +47,16 @@ public final class Launcher {
             failure.printStackTrace();
             throw failure;
         }
+    }
+
+    public static void repaintAllWindows() {
+        SwingUtilities.invokeLater(() -> {
+            for (Window window : Window.getWindows()) {
+                window.validate();
+                window.repaint();
+            }
+            Toolkit.getDefaultToolkit().sync();
+        });
     }
 
     private static Rectangle configureMobileWindow() throws Exception {

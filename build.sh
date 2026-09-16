@@ -38,7 +38,9 @@ if [[ ! -f "$root/.cache/client-$runelite_version-shaded.jar" ]]; then
   curl -fL --retry 3 "$runelite_url" -o "$root/.cache/client-$runelite_version-shaded.jar"
 fi
 cp "$root/.cache/client-$runelite_version-shaded.jar" "$app/libs/runelite.jar"
-javac -d "$app/classes" "$root/java/Launcher.java"
+javac -d "$app/classes" \
+  "$root/java/Launcher.java" \
+  "$root/java/net/runelite/client/util/LinkBrowser.java"
 
 sdk="$(xcrun --sdk iphonesimulator --show-sdk-path)"
 # The downloaded runtime is device-tagged; make this dependency simulator-tagged
