@@ -177,7 +177,9 @@ static NSData *QDPublicKey(SecKeyRef privateKey) {
 }
 
 static NSData *QDTranscript(NSString *domain, NSArray<NSString *> *values) {
-    NSMutableArray *parts = [NSMutableArray arrayWithObject:domain];
+    NSUInteger domainBytes = [domain lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
+    NSMutableArray *parts = [NSMutableArray arrayWithObject:
+        [NSString stringWithFormat:@"%lu:%@", (unsigned long)domainBytes, domain]];
     for (NSString *value in values) {
         NSUInteger bytes = [value lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
         [parts addObject:[NSString stringWithFormat:@"%lu:%@", (unsigned long)bytes, value]];
@@ -391,6 +393,31 @@ static void QDSetKey(int key, BOOL pressed) {
     QDSendInput(QDInputKey, ' ', key, pressed ? 1 : 0, 0);
 }
 
+@interface QDKeyboardView : UIView <UIKeyInput>
+@end
+
+@implementation QDKeyboardView
+- (BOOL)canBecomeFirstResponder { return YES; }
+- (BOOL)hasText { return YES; }
+- (UIKeyboardType)keyboardType { return UIKeyboardTypeDefault; }
+- (UIReturnKeyType)returnKeyType { return UIReturnKeyDone; }
+- (UITextAutocorrectionType)autocorrectionType { return UITextAutocorrectionTypeNo; }
+- (UITextAutocapitalizationType)autocapitalizationType {
+    return UITextAutocapitalizationTypeNone;
+}
+- (void)insertText:(NSString *)text {
+    if ([text isEqualToString:@"\n"] || [text isEqualToString:@"\r"]) {
+        QDSendKey(10);
+        [self resignFirstResponder];
+        return;
+    }
+    for (NSUInteger i = 0; i < text.length; i++) {
+        QDSendInput(QDInputChar, [text characterAtIndex:i], 0, 0, 0);
+    }
+}
+- (void)deleteBackward { QDSendKey(8); }
+@end
+
 static void QDRepaint(void) {
     JNIEnv *env = QDEnv();
     if (!env) return;
@@ -539,12 +566,11 @@ static void QDRepaint(void) {
 }
 @end
 
-@interface AppDelegate : UIResponder <UIApplicationDelegate, UITextFieldDelegate,
-                                      UIDocumentPickerDelegate>
+@interface AppDelegate : UIResponder <UIApplicationDelegate, UIDocumentPickerDelegate>
 @property(nonatomic, strong) UIWindow *window;
 @property(nonatomic, strong) QDSurfaceView *surface;
 @property(nonatomic, strong) UILabel *status;
-@property(nonatomic, strong) UITextField *keyboard;
+@property(nonatomic, strong) QDKeyboardView *keyboard;
 @property(nonatomic, strong) UIButton *shiftButton;
 @property(nonatomic, strong) UIButton *controlButton;
 @property(nonatomic, strong) UIButton *altButton;
@@ -649,6 +675,9 @@ static NSString *RunJava(int width, int height) {
 @implementation AppDelegate
 - (BOOL)application:(UIApplication *)application
     didFinishLaunchingWithOptions:(NSDictionary *)options {
+    NSCAssert([QDTranscript(@"D", @[@"x"]) isEqualToData:
+        [@"1:D\n1:x" dataUsingEncoding:NSUTF8StringEncoding]],
+        @"QuackDuck auth transcript mismatch");
     QDDisableMicrophoneRequest();
     UIViewController *controller = [UIViewController new];
     controller.view.backgroundColor = UIColor.blackColor;
@@ -701,11 +730,9 @@ static NSString *RunJava(int width, int height) {
         [controls.heightAnchor constraintEqualToConstant:36]
     ]];
 
-    self.keyboard = [[UITextField alloc] initWithFrame:CGRectMake(-2, -2, 1, 1)];
-    self.keyboard.delegate = self;
-    self.keyboard.autocorrectionType = UITextAutocorrectionTypeNo;
-    self.keyboard.autocapitalizationType = UITextAutocapitalizationTypeNone;
-    self.keyboard.returnKeyType = UIReturnKeyDone;
+    self.keyboard = [[QDKeyboardView alloc] initWithFrame:CGRectMake(1, 1, 2, 2)];
+    self.keyboard.backgroundColor = UIColor.clearColor;
+    self.keyboard.accessibilityElementsHidden = YES;
     [controller.view addSubview:self.keyboard];
 
     self.window = [[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
@@ -914,24 +941,11 @@ static NSString *RunJava(int width, int height) {
 
 - (void)toggleKeyboard {
     if (self.keyboard.isFirstResponder) [self.keyboard resignFirstResponder];
-    else [self.keyboard becomeFirstResponder];
-}
-
-- (BOOL)textField:(UITextField *)textField
-    shouldChangeCharactersInRange:(NSRange)range
-                replacementString:(NSString *)string {
-    if (range.length > 0 && string.length == 0) QDSendKey(8);
-    for (NSUInteger i = 0; i < string.length; i++) {
-        QDSendInput(QDInputChar, [string characterAtIndex:i], 0, 0, 0);
+    else {
+        [self.window makeKeyWindow];
+        [self.keyboard becomeFirstResponder];
+        [self.keyboard reloadInputViews];
     }
-    textField.text = @"";
-    return NO;
-}
-
-- (BOOL)textFieldShouldReturn:(UITextField *)textField {
-    QDSendKey(10);
-    [textField resignFirstResponder];
-    return NO;
 }
 @end
 
