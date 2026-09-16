@@ -39,6 +39,15 @@ static void QDRecord(NSString *line) {
     fclose(file);
 }
 
+static void QDPrepareRecord(void) {
+    NSString *documents = NSSearchPathForDirectoriesInDomains(
+        NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
+    NSString *sentinel = [documents stringByAppendingPathComponent:@"java-ok.txt"];
+    setenv("QD_SENTINEL", sentinel.UTF8String, 1);
+    FILE *file = fopen(sentinel.UTF8String, "w");
+    if (file) fclose(file);
+}
+
 static NSString *QDBase64URL(NSData *data) {
     NSString *value = [data base64EncodedStringWithOptions:0];
     value = [value stringByReplacingOccurrencesOfString:@"+" withString:@"-"];
@@ -694,6 +703,7 @@ static NSString *RunJava(int width, int height) {
 @implementation AppDelegate
 - (BOOL)application:(UIApplication *)application
     didFinishLaunchingWithOptions:(NSDictionary *)options {
+    QDPrepareRecord();
     NSCAssert([QDTranscript(@"D", @[@"x"]) isEqualToData:
         [@"1:D\n1:x" dataUsingEncoding:NSUTF8StringEncoding]],
         @"QuackDuck auth transcript mismatch");

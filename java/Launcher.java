@@ -12,6 +12,7 @@ import java.io.OutputStream;
 import java.lang.reflect.InvocationTargetException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.Properties;
 import javax.swing.BorderFactory;
 import javax.swing.SwingUtilities;
@@ -23,7 +24,8 @@ public final class Launcher {
         PrintStream output = new PrintStream(Files.newOutputStream(log), true);
         System.setOut(output);
         System.setErr(output);
-        Files.writeString(status, "JVM_OK " + System.getProperty("java.version") + "\nRUNITELITE_LOADING\n");
+        Files.writeString(status, "JVM_OK " + System.getProperty("java.version") +
+            "\nRUNITELITE_LOADING\n", StandardOpenOption.CREATE, StandardOpenOption.APPEND);
 
         try {
             Class.forName("com.github.caciocavallosilano.cacio.ctc.CTCPreloadClassLoader");
