@@ -660,6 +660,9 @@ static NSString *RunJava(int width, int height) {
     const char *args[] = {
         java.UTF8String, "-Xms128m", "-Xmx768m", "-ea",
         "-XX:+UnlockExperimentalVMOptions", "-XX:+DisablePrimordialThreadGuardPages",
+#if !TARGET_OS_SIMULATOR
+        "-XX:+MirrorMappedCodeCache",
+#endif
         "-XX:-UseCompressedClassPointers", "-Djava.awt.headless=false",
         "-Dos.name=iOS",
         "-Dcacio.font.fontmanager=sun.awt.X11FontManager",
