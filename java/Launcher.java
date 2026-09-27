@@ -1,10 +1,14 @@
 package dev.quackduck;
 
+import java.awt.Component;
 import java.awt.Font;
 import java.awt.GraphicsEnvironment;
+import java.awt.Point;
 import java.awt.Rectangle;
 import java.awt.Toolkit;
 import java.awt.Window;
+import java.awt.event.MouseEvent;
+import java.awt.event.MouseWheelEvent;
 import java.io.PrintWriter;
 import java.io.PrintStream;
 import java.io.InputStream;
@@ -16,6 +20,7 @@ import java.nio.file.StandardOpenOption;
 import java.util.Properties;
 import java.util.prefs.Preferences;
 import javax.swing.BorderFactory;
+import javax.swing.JScrollPane;
 import javax.swing.SwingUtilities;
 
 public final class Launcher {
@@ -55,24 +60,54 @@ public final class Launcher {
     }
 
     public static void repaintAllWindows() {
-        Thread pulses = new Thread(() -> {
-            for (int pulse = 0; pulse < 4; pulse++) {
-                SwingUtilities.invokeLater(() -> {
-                    for (Window window : Window.getWindows()) {
-                        window.validate();
-                        window.repaint();
-                    }
-                    Toolkit.getDefaultToolkit().sync();
-                });
-                try {
-                    Thread.sleep(75);
-                } catch (InterruptedException ignored) {
-                    return;
-                }
+        SwingUtilities.invokeLater(() -> {
+            Window[] windows = Window.getWindows();
+            for (int i = windows.length - 1; i >= 0; i--) {
+                if (!windows[i].isShowing()) continue;
+                windows[i].validate();
+                windows[i].repaint();
+                break;
             }
-        }, "quackduck-repaint");
-        pulses.setDaemon(true);
-        pulses.start();
+            Toolkit.getDefaultToolkit().sync();
+        });
+    }
+
+    public static boolean scrollAt(int x, int y, int steps) {
+        if (steps != 0) {
+            SwingUtilities.invokeLater(() -> scrollAtOnEdt(x, y, steps));
+            return true;
+        }
+        if (SwingUtilities.isEventDispatchThread()) return scrollAtOnEdt(x, y, 0);
+        boolean[] found = { false };
+        try {
+            SwingUtilities.invokeAndWait(() -> found[0] = scrollAtOnEdt(x, y, 0));
+        } catch (Exception failure) {
+            System.err.println("QD_IOS: scroll hit test failed: " + failure);
+        }
+        return found[0];
+    }
+
+    private static boolean scrollAtOnEdt(int x, int y, int steps) {
+        Window[] windows = Window.getWindows();
+        for (int i = windows.length - 1; i >= 0; i--) {
+            Window window = windows[i];
+            if (!window.isShowing() || !window.getBounds().contains(x, y)) continue;
+            Component child = SwingUtilities.getDeepestComponentAt(
+                window, x - window.getX(), y - window.getY());
+            for (Component parent = child; parent != null; parent = parent.getParent()) {
+                if (!(parent instanceof JScrollPane pane)) continue;
+                if (steps != 0) {
+                    Point local = SwingUtilities.convertPoint(window,
+                        x - window.getX(), y - window.getY(), pane);
+                    pane.dispatchEvent(new MouseWheelEvent(pane, MouseEvent.MOUSE_WHEEL,
+                        System.currentTimeMillis(), 0, local.x, local.y, 0, false,
+                        MouseWheelEvent.WHEEL_UNIT_SCROLL, 3, steps));
+                }
+                return true;
+            }
+            break;
+        }
+        return false;
     }
 
     private static Rectangle configureMobileWindow() throws Exception {

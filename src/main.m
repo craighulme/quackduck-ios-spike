@@ -32,6 +32,7 @@ static jclass gInputClass;
 static jmethodID gReceiveInput;
 static jclass gLauncherClass;
 static jmethodID gRepaintWindows;
+static jmethodID gScrollAt;
 
 static NSString *const QDAuthURL = @"https://quackduck.dev/api/mobile/device";
 static NSString *const QDAccountURL = @"https://quackduck.dev/mobile";
@@ -386,7 +387,9 @@ enum {
     QDInputKey = 1005,
     QDInputMouseButton = 1006,
     QDButton1DownMask = 1024,
-    QDButton3DownMask = 4096,
+    // Caciocavallo preserves button 2/3 identity with the legacy masks.
+    QDButton2Mask = 8,
+    QDButton3Mask = 4,
 };
 
 static JNIEnv *QDEnv(void) {
@@ -454,22 +457,45 @@ static void QDSetKey(int key, BOOL pressed) {
 - (void)deleteBackward { QDSendKey(8); }
 @end
 
-static void QDRepaint(void) {
-    JNIEnv *env = QDEnv();
-    if (!env) return;
+static jclass QDLauncherClass(JNIEnv *env) {
     if (!gLauncherClass) {
         jclass local = (*env)->FindClass(env, "dev/quackduck/Launcher");
         if (!local) {
             (*env)->ExceptionClear(env);
-            return;
+            return NULL;
         }
         gLauncherClass = (*env)->NewGlobalRef(env, local);
-        gRepaintWindows = (*env)->GetStaticMethodID(env, gLauncherClass,
-            "repaintAllWindows", "()V");
+        (*env)->DeleteLocalRef(env, local);
     }
+    return gLauncherClass;
+}
+
+static void QDRepaint(void) {
+    JNIEnv *env = QDEnv();
+    if (!env || !QDLauncherClass(env)) return;
+    if (!gRepaintWindows) gRepaintWindows = (*env)->GetStaticMethodID(env,
+        gLauncherClass, "repaintAllWindows", "()V");
     if (gRepaintWindows) (*env)->CallStaticVoidMethod(env, gLauncherClass,
                                                        gRepaintWindows);
     if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+}
+
+static BOOL QDScrollAt(int x, int y, int steps) {
+    JNIEnv *env = QDEnv();
+    if (!env || !QDLauncherClass(env)) return NO;
+    if (!gScrollAt) gScrollAt = (*env)->GetStaticMethodID(env, gLauncherClass,
+        "scrollAt", "(III)Z");
+    if (!gScrollAt) {
+        (*env)->ExceptionClear(env);
+        return NO;
+    }
+    jboolean result = (*env)->CallStaticBooleanMethod(env, gLauncherClass,
+                                                       gScrollAt, x, y, steps);
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        return NO;
+    }
+    return result;
 }
 
 @interface QDSurfaceView : UIView
@@ -477,6 +503,10 @@ static void QDRepaint(void) {
 @property(nonatomic) int pixelHeight;
 @property(nonatomic, copy) void (^firstFrame)(void);
 @property(nonatomic) NSInteger hoveredMenuRow;
+@property(nonatomic) CGPoint holdStart;
+@property(nonatomic) BOOL menuDragged;
+@property(nonatomic) BOOL scrolling;
+@property(nonatomic) CGFloat scrollRemainder;
 - (void)startDisplayLoop;
 @end
 
@@ -490,10 +520,15 @@ static void QDRepaint(void) {
         UILongPressGestureRecognizer *hold = [[UILongPressGestureRecognizer alloc]
             initWithTarget:self action:@selector(handleHold:)];
         hold.minimumPressDuration = 0.4;
+        UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc]
+            initWithTarget:self action:@selector(handlePan:)];
+        [pan requireGestureRecognizerToFail:hold];
         UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc]
             initWithTarget:self action:@selector(handleTap:)];
         [tap requireGestureRecognizerToFail:hold];
+        [tap requireGestureRecognizerToFail:pan];
         [self addGestureRecognizer:hold];
+        [self addGestureRecognizer:pan];
         [self addGestureRecognizer:tap];
     }
     return self;
@@ -516,24 +551,60 @@ static void QDRepaint(void) {
     CGPoint point = [gesture locationInView:self];
     [self sendCursorAt:point];
     if (gesture.state == UIGestureRecognizerStateBegan) {
+        self.holdStart = point;
+        self.menuDragged = NO;
         self.hoveredMenuRow = -1;
-        QDSendInput(QDInputMouseButton, QDButton3DownMask, 1, 0, 0);
-        QDSendInput(QDInputMouseButton, QDButton3DownMask, 0, 0, 0);
+        QDSendInput(QDInputMouseButton, QDButton3Mask, 1, 0, 0);
+        QDSendInput(QDInputMouseButton, QDButton3Mask, 0, 0, 0);
         [[[UIImpactFeedbackGenerator alloc]
             initWithStyle:UIImpactFeedbackStyleMedium] impactOccurred];
     } else if (gesture.state == UIGestureRecognizerStateChanged) {
+        self.menuDragged |= hypot(point.x - self.holdStart.x,
+                                  point.y - self.holdStart.y) > 8;
         NSInteger row = (NSInteger)floor(point.y * self.pixelHeight /
                                          MAX(self.bounds.size.height, 1) / 15.0);
         if (row != self.hoveredMenuRow) {
             self.hoveredMenuRow = row;
             [[[UISelectionFeedbackGenerator alloc] init] selectionChanged];
         }
-    } else if (gesture.state == UIGestureRecognizerStateEnded) {
+    } else if (gesture.state == UIGestureRecognizerStateEnded && self.menuDragged) {
         QDSendInput(QDInputMouseButton, QDButton1DownMask, 1, 0, 0);
         QDSendInput(QDInputMouseButton, QDButton1DownMask, 0, 0, 0);
         QDRepaint();
         [[[UIImpactFeedbackGenerator alloc]
             initWithStyle:UIImpactFeedbackStyleLight] impactOccurred];
+    }
+}
+
+- (void)handlePan:(UIPanGestureRecognizer *)gesture {
+    CGPoint point = [gesture locationInView:self];
+    CGPoint delta = [gesture translationInView:self];
+    [gesture setTranslation:CGPointZero inView:self];
+    int x = (int)round(point.x * self.pixelWidth / MAX(self.bounds.size.width, 1));
+    int y = (int)round(point.y * self.pixelHeight / MAX(self.bounds.size.height, 1));
+    if (gesture.state == UIGestureRecognizerStateBegan) {
+        self.scrollRemainder = 0;
+        self.scrolling = QDScrollAt(x, y, 0);
+        if (!self.scrolling) {
+            [self sendCursorAt:CGPointMake(point.x - delta.x, point.y - delta.y)];
+            QDSendInput(QDInputMouseButton, QDButton2Mask, 1, 0, 0);
+        }
+    }
+    if (gesture.state == UIGestureRecognizerStateBegan ||
+        gesture.state == UIGestureRecognizerStateChanged) {
+        if (self.scrolling) {
+            self.scrollRemainder -= delta.y;
+            int steps = (int)(self.scrollRemainder / 18.0);
+            self.scrollRemainder -= steps * 18.0;
+            if (steps) QDScrollAt(x, y, steps);
+        } else {
+            [self sendCursorAt:point];
+        }
+    } else if (!self.scrolling &&
+               (gesture.state == UIGestureRecognizerStateEnded ||
+                gesture.state == UIGestureRecognizerStateCancelled)) {
+        [self sendCursorAt:point];
+        QDSendInput(QDInputMouseButton, QDButton2Mask, 0, 0, 0);
     }
 }
 
