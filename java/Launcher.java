@@ -14,6 +14,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.Properties;
+import java.util.prefs.Preferences;
 import javax.swing.BorderFactory;
 import javax.swing.SwingUtilities;
 
@@ -28,6 +29,7 @@ public final class Launcher {
             "\nRUNITELITE_LOADING\n", StandardOpenOption.CREATE, StandardOpenOption.APPEND);
 
         try {
+            Preferences.userRoot().flush();
             Class.forName("com.github.caciocavallosilano.cacio.ctc.CTCPreloadClassLoader");
             Path font = Path.of(System.getProperty("java.home"), "lib", "fonts", "NotoSans.ttf");
             GraphicsEnvironment.getLocalGraphicsEnvironment()

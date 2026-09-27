@@ -658,13 +658,14 @@ static NSString *RunJava(int width, int height) {
     NSString *urlProperty = [@"-Dqd.url.request=" stringByAppendingString:urlRequest];
 
     const char *args[] = {
-        java.UTF8String, "-Xms128m", "-Xmx768m", "-ea",
+        java.UTF8String, "-Xms128m", "-Xmx512m", "-XX:ReservedCodeCacheSize=96m", "-ea",
         "-XX:+UnlockExperimentalVMOptions", "-XX:+DisablePrimordialThreadGuardPages",
 #if !TARGET_OS_SIMULATOR
         "-XX:+MirrorMappedCodeCache",
 #endif
         "-XX:-UseCompressedClassPointers", "-Djava.awt.headless=false",
         "-Dos.name=iOS",
+        "-Djava.util.prefs.PreferencesFactory=java.util.prefs.MacOSXPreferencesFactory",
         "-Dcacio.font.fontmanager=sun.awt.X11FontManager",
         "-Dcacio.font.fontscaler=sun.font.FreetypeFontScaler", screen.UTF8String,
         "-Dswing.defaultlaf=javax.swing.plaf.metal.MetalLookAndFeel",
