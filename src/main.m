@@ -886,7 +886,11 @@ static NSString *RunJava(int width, int height) {
 }
 
 - (void)presentJITPrompt {
-    if (self.window.rootViewController.presentedViewController) return;
+    if (self.window.rootViewController.presentedViewController) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)),
+            dispatch_get_main_queue(), ^{ if (self.waitingForJIT) [self presentJITPrompt]; });
+        return;
+    }
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"JIT required"
         message:@"iOS must enable JIT before RuneLite's Java runtime can start."
         preferredStyle:UIAlertControllerStyleAlert];
