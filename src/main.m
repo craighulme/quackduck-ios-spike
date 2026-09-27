@@ -797,12 +797,15 @@ static NSString *RunJava(int width, int height) {
     [request setValue:@"no-store" forHTTPHeaderField:@"cache-control"];
     [[[NSURLSession sharedSession] dataTaskWithRequest:request
         completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
-            NSDictionary *plist = data.length <= 65536 ?
+            NSDictionary *plist = data.length > 0 && data.length <= 65536 ?
                 [NSPropertyListSerialization propertyListWithData:data options:0
                     format:nil error:nil] : nil;
             NSString *latest = [plist isKindOfClass:NSDictionary.class]
                 ? plist[@"CFBundleShortVersionString"] : nil;
             NSInteger status = [(NSHTTPURLResponse *)response statusCode];
+            if (error || status != 200 || !QDValidVersion(latest))
+                NSLog(@"QD_IOS: update check failed: HTTP %ld, %@", (long)status,
+                      error.localizedDescription ?: @"invalid version response");
             dispatch_async(dispatch_get_main_queue(), ^{
                 if (error || status != 200 || !QDValidVersion(latest)) {
                     [self blockForUpdate:@"The current release could not be verified. Check your connection and try again."];
