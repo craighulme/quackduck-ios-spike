@@ -555,6 +555,7 @@ static void QDRepaint(void) {
             "Lcom/github/caciocavallosilano/cacio/ctc/CTCScreen;");
         while (!(*env)->GetStaticObjectField(env, screen, instanceID)) usleep(100000);
         BOOL sentFirstFrame = NO;
+        dispatch_semaphore_t frameReady = dispatch_semaphore_create(1);
 
         for (;;) {
             jintArray array = (jintArray)(*env)->CallStaticObjectMethod(env, screen, getRGB);
@@ -570,29 +571,33 @@ static void QDRepaint(void) {
 
             jsize count = (*env)->GetArrayLength(env, array);
             size_t expected = (size_t)self.pixelWidth * self.pixelHeight;
-            if ((size_t)count >= expected) {
-                NSMutableData *pixels = [NSMutableData dataWithLength:expected * 4];
-                (*env)->GetIntArrayRegion(env, array, 0, (jsize)expected, pixels.mutableBytes);
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    CGDataProviderRef provider = CGDataProviderCreateWithCFData(
-                        (__bridge CFDataRef)pixels);
-                    CGColorSpaceRef colors = CGColorSpaceCreateDeviceRGB();
-                    CGImageRef image = CGImageCreate(
-                        self.pixelWidth, self.pixelHeight, 8, 32,
-                        self.pixelWidth * 4, colors,
-                        kCGImageAlphaFirst | kCGBitmapByteOrder32Little,
-                        provider, NULL, false, kCGRenderingIntentDefault);
-                    self.layer.contents = (__bridge id)image;
-                    self.layer.contentsGravity = kCAGravityResizeAspect;
-                    CGImageRelease(image);
-                    CGColorSpaceRelease(colors);
-                    CGDataProviderRelease(provider);
-                });
-                if (!sentFirstFrame) {
-                    sentFirstFrame = YES;
+            if ((size_t)count >= expected &&
+                dispatch_semaphore_wait(frameReady, DISPATCH_TIME_NOW) == 0) {
+                @autoreleasepool {
+                    NSMutableData *pixels = [NSMutableData dataWithLength:expected * 4];
+                    (*env)->GetIntArrayRegion(env, array, 0, (jsize)expected, pixels.mutableBytes);
                     dispatch_async(dispatch_get_main_queue(), ^{
-                        if (self.firstFrame) self.firstFrame();
+                        CGDataProviderRef provider = CGDataProviderCreateWithCFData(
+                            (__bridge CFDataRef)pixels);
+                        CGColorSpaceRef colors = CGColorSpaceCreateDeviceRGB();
+                        CGImageRef image = CGImageCreate(
+                            self.pixelWidth, self.pixelHeight, 8, 32,
+                            self.pixelWidth * 4, colors,
+                            kCGImageAlphaFirst | kCGBitmapByteOrder32Little,
+                            provider, NULL, false, kCGRenderingIntentDefault);
+                        self.layer.contents = (__bridge id)image;
+                        self.layer.contentsGravity = kCAGravityResizeAspect;
+                        CGImageRelease(image);
+                        CGColorSpaceRelease(colors);
+                        CGDataProviderRelease(provider);
+                        dispatch_semaphore_signal(frameReady);
                     });
+                    if (!sentFirstFrame) {
+                        sentFirstFrame = YES;
+                        dispatch_async(dispatch_get_main_queue(), ^{
+                            if (self.firstFrame) self.firstFrame();
+                        });
+                    }
                 }
             }
             (*env)->DeleteLocalRef(env, array);
