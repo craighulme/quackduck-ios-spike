@@ -11,6 +11,16 @@
 #include <stdlib.h>
 #include <unistd.h>
 
+#if !TARGET_OS_SIMULATOR
+extern int csops(pid_t pid, unsigned int ops, void *useraddr, size_t usersize);
+// ponytail: CS_DEBUGGED suffices on non-TXM devices; add the allocator protocol for TXM devices.
+static BOOL QDJITReady(void) {
+    int flags = 0;
+    return csops(getpid(), 0, &flags, sizeof(flags)) == 0 &&
+           (flags & 0x10000000) != 0; // CS_DEBUGGED
+}
+#endif
+
 typedef jint JLI_Launch(int, const char **, int, const char **, int,
                        const char **, const char *, const char *, const char *,
                        const char *, jboolean, jboolean, jboolean, jint);
@@ -608,6 +618,7 @@ static void QDRepaint(void) {
 @property(nonatomic) BOOL awaitingPairCode;
 @property(nonatomic) BOOL updateBlocked;
 @property(nonatomic) BOOL javaStarted;
+@property(nonatomic) BOOL waitingForJIT;
 @end
 
 static NSString *RunJava(int width, int height) {
@@ -874,8 +885,49 @@ static NSString *RunJava(int width, int height) {
     });
 }
 
+- (void)presentJITPrompt {
+    if (self.window.rootViewController.presentedViewController) return;
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"JIT required"
+        message:@"iOS must enable JIT before RuneLite's Java runtime can start."
+        preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Open StikDebug"
+        style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) {
+            NSString *url = [NSString stringWithFormat:
+                @"stikdebug://enable-jit?bundle-id=%@&pid=%d",
+                NSBundle.mainBundle.bundleIdentifier, getpid()];
+            [UIApplication.sharedApplication openURL:[NSURL URLWithString:url]
+                options:@{} completionHandler:^(BOOL opened) {
+                    if (!opened) dispatch_async(dispatch_get_main_queue(), ^{
+                        self.status.text = @"Install StikDebug, then reopen QuackDuck to enable JIT.";
+                        [self presentJITPrompt];
+                    });
+                }];
+        }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"StikDebug setup"
+        style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) {
+            [UIApplication.sharedApplication openURL:
+                [NSURL URLWithString:@"https://stikdebug.xyz/"]
+                options:@{} completionHandler:nil];
+        }]];
+    [self.window.rootViewController presentViewController:alert animated:YES completion:nil];
+}
+
 - (void)startRuneLite {
     if (self.javaStarted) return;
+#if !TARGET_OS_SIMULATOR
+    if (!QDJITReady()) {
+        self.waitingForJIT = YES;
+        self.status.hidden = NO;
+        self.status.text = @"Waiting for JIT before starting RuneLite…";
+        NSLog(@"QD_IOS: waiting for JIT");
+        QDRecord(@"JIT_WAIT");
+        [self presentJITPrompt];
+        return;
+    }
+    NSLog(@"QD_IOS: JIT ready");
+    QDRecord(@"JIT_READY");
+#endif
+    self.waitingForJIT = NO;
     self.javaStarted = YES;
     self.status.text = @"Starting RuneLite…";
     [self.surface startDisplayLoop];
@@ -966,6 +1018,8 @@ static NSString *RunJava(int width, int height) {
         dispatch_async(dispatch_get_main_queue(), ^{ [self presentPairCode]; });
     } else if (self.updateBlocked) {
         dispatch_async(dispatch_get_main_queue(), ^{ [self checkMandatoryUpdate]; });
+    } else if (self.waitingForJIT) {
+        dispatch_async(dispatch_get_main_queue(), ^{ [self startRuneLite]; });
     }
 }
 
